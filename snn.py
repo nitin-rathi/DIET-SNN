@@ -129,7 +129,7 @@ def train(epoch):
         optimizer.step()        
         pred = output.max(1,keepdim=True)[1]
         correct = pred.eq(target.data.view_as(pred)).cpu().sum()
-
+        
         for key, value in model.module.leak.items():
             # maximum of leak=1.0
             model.module.leak[key].data.clamp_(max=1.0)
@@ -249,23 +249,29 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained_snn',         default='',                 type=str,       help='pretrained SNN for inference')
     parser.add_argument('--test_only',              action='store_true',                        help='perform only inference')
     parser.add_argument('--log',                    action='store_true',                        help='to print the output on terminal or to log file')
-    parser.add_argument('--epochs',                 default=50,                 type=int,       help='number of training epochs')
-    parser.add_argument('--lr_interval',            default='0.45 0.70 0.90',   type=str,       help='intervals at which to reduce lr, expressed as %%age of total epochs')
+    parser.add_argument('--epochs',                 default=30,                 type=int,       help='number of training epochs')
+    parser.add_argument('--lr_interval',            default='0.60 0.80 0.90',   type=str,       help='intervals at which to reduce lr, expressed as %%age of total epochs')
     parser.add_argument('--lr_reduce',              default=10,                 type=int,       help='reduction factor for learning rate')
     parser.add_argument('--timesteps',              default=20,                 type=int,       help='simulation timesteps')
     parser.add_argument('--leak',                   default=1.0,                type=float,     help='membrane leak')
-    parser.add_argument('--scaling_factor',         default=0.7,                type=float,     help='scaling factor for thresholds at reduced timesteps')
+    parser.add_argument('--scaling_factor',         default=0.3,                type=float,     help='scaling factor for thresholds at reduced timesteps')
     parser.add_argument('--default_threshold',      default=1.0,                type=float,     help='intial threshold to train SNN from scratch')
     parser.add_argument('--activation',             default='Linear',           type=str,       help='SNN activation function', choices=['Linear', 'STDB'])
     parser.add_argument('--alpha',                  default=0.3,                type=float,     help='parameter alpha for STDB')
     parser.add_argument('--beta',                   default=0.01,               type=float,     help='parameter beta for STDB')
-    parser.add_argument('--optimizer',              default='Adam',             type=str,       help='optimizer for SNN backpropagation', choices=['SGD', 'Adam'])
-    parser.add_argument('--dropout',                default=0.2,                type=float,     help='dropout percentage for conv layers')
+    parser.add_argument('--optimizer',              default='SGD',              type=str,       help='optimizer for SNN backpropagation', choices=['SGD', 'Adam'])
+    parser.add_argument('--weight_decay',           default=5e-4,               type=float,     help='weight decay parameter for the optimizer')
+    parser.add_argument('--momentum',               default=0.95,               type=float,     help='momentum parameter for the SGD optimizer')
+    parser.add_argument('--amsgrad',                default=True,               type=bool,      help='amsgrad parameter for Adam optimizer')
+    parser.add_argument('--dropout',                default=0.5,                type=float,     help='dropout percentage for conv layers')
     parser.add_argument('--kernel_size',            default=3,                  type=int,       help='filter size for the conv layers')
     parser.add_argument('--test_acc_every_batch',   action='store_true',                        help='print acc of every batch during inference')
-    parser.add_argument('--train_acc_batches',      default=200,                type=int,       help='print training progress after this many batches')
+    parser.add_argument('--train_acc_batches',      default=1000,               type=int,       help='print training progress after this many batches')
+    parser.add_argument('--devices',                default='0',                type=str,       help='list of gpu device(s)')
 
     args = parser.parse_args()
+
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.devices
     
     # Seed random number
     torch.manual_seed(args.seed)
@@ -291,6 +297,9 @@ if __name__ == '__main__':
     alpha               = args.alpha
     beta                = args.beta  
     optimizer           = args.optimizer
+    weight_decay        = args.weight_decay
+    momentum            = args.momentum
+    amsgrad             = args.amsgrad
     dropout             = args.dropout
     kernel_size         = args.kernel_size
     test_acc_every_batch= args.test_acc_every_batch
@@ -306,7 +315,7 @@ if __name__ == '__main__':
         os.mkdir(log_file)
     except OSError:
         pass 
-    identifier = 'snn_'+architecture.lower()+'_'+dataset.lower()+'_'+str(timesteps)
+    identifier = 'snn_'+architecture.lower()+'_'+dataset.lower()+'_'+str(timesteps)+'_'+str(datetime.datetime.now())
     log_file+=identifier+'.log'
     
     if args.log:
@@ -467,12 +476,14 @@ if __name__ == '__main__':
 
     for value in model.module.leak.values():
         params += [value]
-
+    
     if optimizer == 'Adam':
-        optimizer = optim.Adam(params, lr=learning_rate, amsgrad=True)
+        optimizer = optim.Adam(params, lr=learning_rate, amsgrad=amsgrad, weight_decay=weight_decay)
     elif optimizer == 'SGD':
-        optimizer = optim.SGD(params, lr=learning_rate)
-        
+        optimizer = optim.SGD(params, lr=learning_rate, momentum=momentum, weight_decay=weight_decay, nesterov=False)
+    
+    f.write('\n {}'.format(optimizer))
+    
     # find_threshold() alters the timesteps and leak, restoring it here
     model.module.network_update(timesteps=timesteps, leak=leak)
     max_accuracy = 0.0

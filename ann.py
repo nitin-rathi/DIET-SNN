@@ -284,7 +284,9 @@ if __name__ == '__main__':
     if optimizer == 'SGD':
         optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9, weight_decay=5e-4)
     elif optimizer == 'Adam':
-        optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=True)
+        optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=True, weight_decay=5e-4)
+    
+    f.write('\n {}'.format(optimizer))
     
     max_accuracy = 0
     

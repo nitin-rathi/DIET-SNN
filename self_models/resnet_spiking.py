@@ -156,6 +156,7 @@ class RESNET_SNN_STDB(nn.Module):
 		self.mem 			= {}
 		self.mask 			= {}
 		self.spike 			= {}
+		
 
 		self.pre_process    = nn.Sequential(
                                 nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False),
@@ -186,8 +187,9 @@ class RESNET_SNN_STDB(nn.Module):
 		
 		for l in range(len(self.pre_process)):
 			if isinstance(self.pre_process[l],nn.Conv2d):
-				self.threshold[l] = torch.tensor(default_threshold, requires_grad=True)
-				self.leak[l] 	  = torch.tensor(leak, requires_grad=True)
+				#self.register_buffer('threshold[l]', torch.tensor(default_threshold, requires_grad=True))
+				self.threshold[l] = nn.Parameter(torch.tensor(default_threshold))
+				self.leak[l] 	  = nn.Parameter(torch.tensor(leak))
 
 		pos = len(self.pre_process)
 				
@@ -197,8 +199,8 @@ class RESNET_SNN_STDB(nn.Module):
 			for index in range(len(layer)):
 				for l in range(len(layer[index].residual)):
 					if isinstance(layer[index].residual[l],nn.Conv2d):
-						self.threshold[pos] = torch.tensor(default_threshold, requires_grad=True)
-						self.leak[pos] 		= torch.tensor(leak, requires_grad=True)
+						self.threshold[pos] = nn.Parameter(torch.tensor(default_threshold))
+						self.leak[pos] 		= nn.Parameter(torch.tensor(leak))
 						pos=pos+1
 				
 	def _initialize_weights2(self):
@@ -226,7 +228,7 @@ class RESNET_SNN_STDB(nn.Module):
 		for pos in range(len(self.pre_process)):
 			if isinstance(self.pre_process[pos],nn.Conv2d):
 				if thresholds:
-					self.threshold[pos] = torch.tensor(thresholds.pop(0)*self.scaling_factor, requires_grad=True)
+					self.threshold[pos].data = torch.tensor(thresholds.pop(0)*self.scaling_factor)
 		# while(True):
 		# 	try:
 		# 		self.threshold[pos] = self.threshold[pos] * scaling_factor
@@ -249,7 +251,7 @@ class RESNET_SNN_STDB(nn.Module):
 		self.timesteps 	= timesteps
 		for key, value in self.leak.items():
 			if isinstance(leak, list) and leak:
-				self.leak[key] = torch.tensor(leak.pop(0), requires_grad=True)
+				self.leak[key].data = torch.tensor(leak.pop(0))
 	
 	def neuron_init(self, x):
 		
@@ -265,6 +267,9 @@ class RESNET_SNN_STDB(nn.Module):
 			
 			if isinstance(self.pre_process[l], nn.Conv2d):
 				self.mem[l] = torch.zeros(self.batch_size, self.pre_process[l].out_channels, self.width, self.height)
+				self.spike[l] = torch.ones(self.mem[l].shape)*(-1000)
+				#self.register_buffer('mem[l]', torch.zeros(self.batch_size, self.pre_process[l].out_channels, self.width, self.height))
+				#self.register_buffer('spike[l]', torch.ones(self.mem[l].shape)*(-1000))
 
 			elif isinstance(self.pre_process[l], nn.Dropout):
 				self.mask[l] = self.pre_process[l](torch.ones(self.mem[l-2].shape))
@@ -282,6 +287,9 @@ class RESNET_SNN_STDB(nn.Module):
 				for l in range(len(layer[index].residual)):
 					if isinstance(layer[index].residual[l],nn.Conv2d):
 						self.mem[pos] = torch.zeros(self.batch_size, layer[index].residual[l].out_channels, self.width, self.height)
+						self.spike[pos] = torch.ones(self.mem[pos].shape)*(-1000)
+						#self.register_buffer('mem[pos]', torch.zeros(self.batch_size, layer[index].residual[l].out_channels, self.width, self.height))
+						#self.register_buffer('spike[pos]', torch.ones(self.mem[pos].shape)*(-1000))
 						pos = pos + 1
 					elif isinstance(layer[index].residual[l],nn.Dropout):
 						self.mask[pos-1] = layer[index].residual[l](torch.ones(self.mem[pos-1].shape))
@@ -292,11 +300,11 @@ class RESNET_SNN_STDB(nn.Module):
 
 		#final classifier layer
 		self.mem[pos] = torch.zeros(self.batch_size, self.classifier[0].out_features)
+		#self.register_buffer('mem[pos]', torch.zeros(self.batch_size, self.classifier[0].out_features))
 
-		self.spike = copy.deepcopy(self.mem)
-		for key, values in self.spike.items():
-			for value in values:
-				value.fill_(-1000)
+		# self.spike = copy.deepcopy(self.mem)
+		# for key in self.spike.keys():
+		# 	self.spike[key].fill_(-1000)
 
 	def forward(self, x, find_max_mem=False, max_mem_layer=0):
 		
