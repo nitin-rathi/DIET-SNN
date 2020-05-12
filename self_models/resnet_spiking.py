@@ -176,10 +176,20 @@ class RESNET_SNN_STDB(nn.Module):
 		self.layer2 		= self._make_layer(block, 128, cfg[self.resnet_name][1], stride=2, dropout=self.dropout)
 		self.layer3 		= self._make_layer(block, 256, cfg[self.resnet_name][2], stride=2, dropout=self.dropout)
 		self.layer4 		= self._make_layer(block, 512, cfg[self.resnet_name][3], stride=2, dropout=self.dropout)
-		#self.avgpool 		= nn.AvgPool2d(2)
+		self.avgpool 		= nn.AvgPool2d(2)
 		self.classifier     = nn.Sequential(
 									nn.Linear(512*2*2, labels, bias=False)
 									)
+		
+		# self.classifier     = nn.Sequential(
+  #                               nn.Linear(512*2*2, 1024, bias=False),
+  #                               nn.ReLU(inplace=True),
+  #                               nn.Dropout(self.dropout),
+  #                               nn.Linear(1024, 1024, bias=False),
+  #                               nn.ReLU(inplace=True),
+  #                               nn.Dropout(self.dropout),
+  #                               nn.Linear(1024, labels, bias=False)
+  #                               )
 
 		self.layers = {1: self.layer1, 2: self.layer2, 3: self.layer3, 4:self.layer4}
 
@@ -202,6 +212,11 @@ class RESNET_SNN_STDB(nn.Module):
 						self.threshold[pos] = nn.Parameter(torch.tensor(default_threshold))
 						self.leak[pos] 		= nn.Parameter(torch.tensor(leak))
 						pos=pos+1
+
+		for l in range(len(self.classifier)):
+			if isinstance(self.classifier[l], nn.Linear):
+				self.threshold[pos+l] 	= nn.Parameter(torch.tensor(default_threshold))
+				self.leak[pos+l] 		= nn.Parameter(torch.tensor(leak)) 
 				
 	def _initialize_weights2(self):
 
@@ -225,13 +240,34 @@ class RESNET_SNN_STDB(nn.Module):
     	
 		self.scaling_factor = scaling_factor
 
+		# for key in sorted(self.threshold.keys()):
+		# 	if thresholds:
+		# 		self.threshold[key].data = torch.tensor(thresholds.pop(0)*self.scaling_factor)
+		
 		for pos in range(len(self.pre_process)):
 			if isinstance(self.pre_process[pos],nn.Conv2d):
 				if thresholds:
 					self.threshold[pos].data = torch.tensor(thresholds.pop(0)*self.scaling_factor)
+
+		pos = len(self.pre_process)
+		for i in range(1,5):
+			layer = self.layers[i]
+			for index in range(len(layer)):
+				for l in range(len(layer[index].residual)):
+					if isinstance(layer[index].residual[l],nn.Conv2d):
+						#self.threshold[pos].data = torch.tensor(thresholds.pop(0)*self.scaling_factor)
+						pos = pos+1
+
+		for l in range(len(self.classifier)):
+			if isinstance(self.classifier[l], nn.Linear):
+				if thresholds:
+					self.threshold[pos+l].data = torch.tensor(thresholds.pop(0)*self.scaling_factor)
+
+		
+		# pos = len(self.pre_process)
 		# while(True):
 		# 	try:
-		# 		self.threshold[pos] = self.threshold[pos] * scaling_factor
+		# 		self.threshold[pos].data = torch.tensor(self.threshold[pos].data * scaling_factor)
 		# 		pos=pos+1
 		# 	except:
 		# 		break
@@ -249,7 +285,7 @@ class RESNET_SNN_STDB(nn.Module):
 
 	def network_update(self, timesteps, leak):
 		self.timesteps 	= timesteps
-		for key, value in self.leak.items():
+		for key in sorted(self.leak.keys()):
 			if isinstance(leak, list) and leak:
 				self.leak[key].data = torch.tensor(leak.pop(0))
 	
@@ -299,12 +335,19 @@ class RESNET_SNN_STDB(nn.Module):
 		#self.height = self.height//self.avgpool.kernel_size
 
 		#final classifier layer
-		self.mem[pos] = torch.zeros(self.batch_size, self.classifier[0].out_features)
+		#self.mem[pos] = torch.zeros(self.batch_size, self.classifier[0].out_features)
 		#self.register_buffer('mem[pos]', torch.zeros(self.batch_size, self.classifier[0].out_features))
 
 		# self.spike = copy.deepcopy(self.mem)
 		# for key in self.spike.keys():
 		# 	self.spike[key].fill_(-1000)
+
+		for l in range(len(self.classifier)):
+			if isinstance(self.classifier[l],nn.Linear):
+				self.mem[pos+l] 	= torch.zeros(self.batch_size, self.classifier[l].out_features)
+				self.spike[pos+l] 	= torch.ones(self.mem[pos+l].shape)*(-1000)
+			elif isinstance(self.classifier[l], nn.Dropout):
+				self.mask[pos+l] 	= self.classifier[l](torch.ones(self.mem[pos+l-2].shape))
 
 	def forward(self, x, find_max_mem=False, max_mem_layer=0):
 		
@@ -361,12 +404,38 @@ class RESNET_SNN_STDB(nn.Module):
 					pos = pos+2
 			
 			#out_prev = self.avgpool(out_prev)
-			out_prev = out_prev.view(self.batch_size, -1)
+			out_prev = out_prev.reshape(self.batch_size, -1)
 
-			# Compute the classification layer outputs
-			self.mem[pos] = self.mem[pos] + self.classifier[0](out_prev)
-			
+			for l in range(len(self.classifier)-1):
+				
+				if isinstance(self.classifier[l], (nn.Linear)):
+					if find_max_mem and (pos+l)==max_mem_layer:
+						if (self.classifier[l](out_prev)).max()>max_mem:
+							max_mem = (self.classifier[l](out_prev)).max()
+						break
+
+					mem_thr 			= (self.mem[pos+l]/self.threshold[pos+l]) - 1.0
+					out 				= self.act_func(mem_thr, (t-1-self.spike[pos+l]))
+					rst 				= self.threshold[pos+l] * (mem_thr>0).float()
+					self.spike[pos+l] 	= self.spike[pos+l].masked_fill(out.bool(),t-1)
+					self.mem[pos+l] 	= self.leak[pos+l]*self.mem[pos+l] + self.classifier[l](out_prev) - rst
+					out_prev  		= out.clone()
+
+				elif isinstance(self.classifier[l], nn.Dropout):
+					out_prev 		= out_prev * self.mask[pos+l]
+
+			#pdb.set_trace()
+			# Compute the final layer outputs
+			if not find_max_mem:
+				if len(self.classifier)>1:
+					self.mem[pos+l+1] 		= self.mem[pos+l+1] + self.classifier[l+1](out_prev)
+				else:
+					self.mem[pos] 		= self.mem[pos] + self.classifier[0](out_prev)
+		
 		if find_max_mem:
 			return max_mem
-				
-		return self.mem[pos]	
+
+		if len(self.classifier)>1:
+			return self.mem[pos+l+1]
+		else:
+			return self.mem[pos]	

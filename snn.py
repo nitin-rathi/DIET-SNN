@@ -52,7 +52,7 @@ def find_threshold(batch_size=512, timesteps=2500, architecture='VGG16'):
     pos=0
     thresholds=[]
     
-    def find(layer, pos):
+    def find(layer):
         max_act=0
         
         f.write('\n Finding threshold for layer {}'.format(layer))
@@ -70,28 +70,43 @@ def find_threshold(batch_size=512, timesteps=2500, architecture='VGG16'):
                 #f.write('\nBatch:{} Current:{:.4f} Max:{:.4f}'.format(batch_idx+1,output.item(),max_act))
                 if batch_idx==0:
                     thresholds.append(max_act)
-                    pos = pos+1
                     f.write(' {}'.format(thresholds))
                     model.module.threshold_update(scaling_factor=1.0, thresholds=thresholds[:])
                     break
-        return pos
-
+    
     if architecture.lower().startswith('vgg'):              
         for l in model.module.features.named_children():
             if isinstance(l[1], nn.Conv2d):
-                pos = find(int(l[0]), pos)
+                find(int(l[0]))
         
         for c in model.module.classifier.named_children():
             if isinstance(c[1], nn.Linear):
-                if (int(l[0])+int(c[0])+1) == (len(model.module.features) + len(model.module.classifier) -1):
-                    pass
+                if (int(c[0]) == len(model.module.classifier) -1):
+                    break
                 else:
-                    pos = find(int(l[0])+int(c[0])+1, pos)
+                    find(int(l[0])+int(c[0])+1)
 
     if architecture.lower().startswith('res'):
         for l in model.module.pre_process.named_children():
             if isinstance(l[1], nn.Conv2d):
-                pos = find(int(l[0]), pos)
+                find(int(l[0]))
+        
+        pos = len(model.module.pre_process)
+
+        for i in range(1,5):
+            layer = model.module.layers[i]
+            for index in range(len(layer)):
+                for l in range(len(layer[index].residual)):
+                    if isinstance(layer[index].residual[l],nn.Conv2d):
+                        pos = pos +1
+
+        for c in model.module.classifier.named_children():
+            if isinstance(c[1],nn.Linear):
+                if (int(c[0])==len(model.module.classifier)-1):
+                    break
+                else:
+                    find(int(c[0])+pos)
+
     f.write('\n ANN thresholds: {}'.format(thresholds))
     return thresholds
 
@@ -166,7 +181,7 @@ def test(epoch):
 
     losses = AverageMeter('Loss')
     top1   = AverageMeter('Acc@1')
-
+   
     with torch.no_grad():
         model.eval()
         global max_accuracy

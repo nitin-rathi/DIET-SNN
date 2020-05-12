@@ -93,14 +93,14 @@ class VGG_SNN_STDB(nn.Module):
 
 		for l in range(len(self.features)):
 			if isinstance(self.features[l], nn.Conv2d):
-				self.threshold[l] 	= torch.tensor(default_threshold, requires_grad=True)
-				self.leak[l] 		= torch.tensor(leak, requires_grad=True)
+				self.threshold[l] 	= nn.Parameter(torch.tensor(default_threshold))
+				self.leak[l] 		= nn.Parameter(torch.tensor(leak))
 				
 		prev = len(self.features)
 		for l in range(len(self.classifier)-1):
 			if isinstance(self.classifier[l], nn.Linear):
-				self.threshold[prev+l] 	= torch.tensor(default_threshold, requires_grad=True)
-				self.leak[prev+l] 		= torch.tensor(leak, requires_grad=True)
+				self.threshold[prev+l] 	= nn.Parameter(torch.tensor(default_threshold))
+				self.leak[prev+l] 		= nn.Parameter(torch.tensor(leak))
 
 	def _initialize_weights2(self):
 		for m in self.modules():
@@ -127,7 +127,7 @@ class VGG_SNN_STDB(nn.Module):
 		for pos in range(len(self.features)):
 			if isinstance(self.features[pos], nn.Conv2d):
 				if thresholds:
-					self.threshold[pos] = torch.tensor(thresholds.pop(0)*self.scaling_factor, requires_grad=True)
+					self.threshold[pos].data = torch.tensor(thresholds.pop(0)*self.scaling_factor)
 				#print('\t Layer{} : {:.2f}'.format(pos, self.threshold[pos]))
 
 		prev = len(self.features)
@@ -135,7 +135,7 @@ class VGG_SNN_STDB(nn.Module):
 		for pos in range(len(self.classifier)-1):
 			if isinstance(self.classifier[pos], nn.Linear):
 				if thresholds:
-					self.threshold[prev+pos] = torch.tensor(thresholds.pop(0)*self.scaling_factor, requires_grad=True)
+					self.threshold[prev+pos].data = torch.tensor(thresholds.pop(0)*self.scaling_factor)
 				#print('\t Layer{} : {:.2f}'.format(prev+pos, self.threshold[prev+pos]))
 
 	def _make_layers(self, cfg):
@@ -206,7 +206,7 @@ class VGG_SNN_STDB(nn.Module):
 		self.timesteps 	= timesteps
 		for key, value in self.leak.items():
 			if isinstance(leak, list) and leak:
-				self.leak[key] = torch.tensor(leak.pop(0), requires_grad=True)
+				self.leak[key].data = torch.tensor(leak.pop(0))
 	
 	def neuron_init(self, x):
 		self.batch_size = x.size(0)
