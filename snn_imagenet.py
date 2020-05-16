@@ -51,11 +51,18 @@ def find_threshold(batch_size=512, timesteps=2500, architecture='VGG16'):
     model.module.network_update(timesteps=timesteps, leak=1.0)
     pos=0
     thresholds=[]
-    
+    pre_calculated = [7.612769603729248, 12.23182201385498, 2.7110540866851807, 2.30560040473938, 0.7672547101974487, 1.658124566078186, 1.81326162815094, 0.5426592826843262, 0.9945646524429321, 1.4132213592529297, 0.3058353066444397, 1.045074224472046, 1.0654196739196777, 0.13718076050281525, 0.6044105291366577]
+
     def find(layer):
         max_act=0
         
         f.write('\n Finding threshold for layer {}'.format(layer))
+        if layer <=43:
+            thresholds.append(pre_calculated.pop(0))
+            f.write(' {}'.format(thresholds))
+            model.module.threshold_update(scaling_factor=1.0, thresholds=thresholds[:])
+            return
+
         for batch_idx, (data, target) in enumerate(loader):
             
             if torch.cuda.is_available() and args.gpu:
@@ -64,11 +71,11 @@ def find_threshold(batch_size=512, timesteps=2500, architecture='VGG16'):
             with torch.no_grad():
                 model.eval()
                 output = model(data, find_max_mem=True, max_mem_layer=layer)
-                if output>max_act:
-                    max_act = output.item()
+                if output.max()>max_act:
+                    max_act = output.max().item()
 
-                #f.write('\nBatch:{} Current:{:.4f} Max:{:.4f}'.format(batch_idx+1,output.item(),max_act))
-                if batch_idx==0:
+                    #f.write('\nBatch:{} Current:{:.4f} Max:{:.4f}'.format(batch_idx+1,output.item(),max_act))
+                if batch_idx==1:
                     thresholds.append(max_act)
                     f.write(' {}'.format(thresholds))
                     model.module.threshold_update(scaling_factor=1.0, thresholds=thresholds[:])
@@ -127,22 +134,38 @@ def train(epoch):
     #total_loss = 0.0
     #total_correct = 0
     model.train()
-       
+    local_time = datetime.datetime.now()   
+    time_chunks = 20
+    model.module.network_update(timesteps=time_chunks, leak=leak)
     #current_time = start_time
     #model.module.network_init(update_interval)
-
+    
     for batch_idx, (data, target) in enumerate(train_loader):
                
         if torch.cuda.is_available() and args.gpu:
             data, target = data.cuda(), target.cuda()
         
-        optimizer.zero_grad()
-        output = model(data) 
+        if batch_idx%20==0 and batch_idx>0:
+            optimizer.step()
+            optimizer.zero_grad()
+        if batch_idx == 0:
+            optimizer.zero_grad()
+        t = 0
+        mem = 0
+        mask = 0
+        spike = 0
+        #pdb.set_trace()
+        while t<(timesteps-time_chunks):
+            with torch.no_grad():
+                output, mem, spike, mask = model(data, mem=mem, spike=spike, mask=mask)
+                t = t+time_chunks
         
+        output, mem, spike, mask = model(data, mem=mem, spike=spike, mask=mask)
+        #pdb.set_trace()
         loss = F.cross_entropy(output,target)
         #make_dot(loss).view()
         loss.backward()
-        optimizer.step()        
+               
         pred = output.max(1,keepdim=True)[1]
         correct = pred.eq(target.data.view_as(pred)).cpu().sum()
         
@@ -161,16 +184,42 @@ def train(epoch):
                 temp1 = temp1+[round(value.item(),2)]
             for key, value in sorted(model.module.leak.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
                 temp2 = temp2+[round(value.item(),2)]
-            f.write('\n\nEpoch: {}, batch: {}, train_loss: {:.4f}, train_acc: {:.4f}, threshold: {}, leak: {}, timesteps: {}'
+            f.write('\n\nEpoch: {}, batch: {}, train_loss: {:.4f}, train_acc: {:.4f}, threshold: {}, leak: {}, timesteps: {}, time: {}'
                     .format(epoch,
                         batch_idx+1,
                         losses.avg,
                         top1.avg,
                         temp1,
                         temp2,
-                        model.module.timesteps
+                        timesteps,
+                        datetime.timedelta(seconds=(datetime.datetime.now() - local_time).seconds)
                         )
                     )
+            local_time = datetime.datetime.now()
+        
+        if (batch_idx+1) % 2400 == 0:    
+            temp1 = []
+            temp2 = []
+            for key, value in sorted(model.module.threshold.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
+                temp1 = temp1+[round(value.item())]
+            for key, value in sorted(model.module.leak.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
+                temp2 = temp2+[round(value.item())]
+            state = {
+                    'epoch'                 : epoch,
+                    'state_dict'            : model.state_dict(),
+                    'optimizer'             : optimizer.state_dict(),
+                    'thresholds'            : temp1,
+                    'timesteps'             : timesteps,
+                    'leak'                  : temp2,
+                    'activation'            : activation
+                }
+            try:
+                os.mkdir('./trained_models/snn/')
+            except OSError:
+                pass 
+            filename = './trained_models/snn/'+identifier+'_train.pth'
+            torch.save(state,filename)
+
     f.write('\nEpoch: {}, lr: {:.1e}, train_loss: {:.4f}, train_acc: {:.4f}'
                     .format(epoch,
                         learning_rate,
@@ -195,10 +244,10 @@ def test(epoch):
             if torch.cuda.is_available() and args.gpu:
                 data, target = data.cuda(), target.cuda()
             
-            output  = model(data) 
-            loss    = F.cross_entropy(output,target)
-            pred    = output.max(1,keepdim=True)[1]
-            correct = pred.eq(target.data.view_as(pred)).cpu().sum()
+            output,_,_,_     = model(data) 
+            loss            = F.cross_entropy(output,target)
+            pred            = output.max(1,keepdim=True)[1]
+            correct         = pred.eq(target.data.view_as(pred)).cpu().sum()
 
             losses.update(loss.item(),data.size(0))
             top1.update(correct.item()/data.size(0), data.size(0))
@@ -212,6 +261,8 @@ def test(epoch):
                     top1.avg
                     )
                 )
+            if batch_idx==100:
+                break
         
         temp1 = []
         temp2 = []
@@ -241,7 +292,7 @@ def test(epoch):
                 os.mkdir('./trained_models/snn/')
             except OSError:
                 pass 
-            filename = './trained_models/snn/'+identifier+'.pth'
+            filename = './trained_models/snn/'+identifier+'_test.pth'
             torch.save(state,filename)    
         
             #if is_best:
@@ -282,15 +333,15 @@ if __name__ == '__main__':
     parser.add_argument('--weight_decay',           default=5e-4,               type=float,     help='weight decay parameter for the optimizer')
     parser.add_argument('--momentum',               default=0.95,               type=float,     help='momentum parameter for the SGD optimizer')
     parser.add_argument('--amsgrad',                default=True,               type=bool,      help='amsgrad parameter for Adam optimizer')
-    parser.add_argument('--betas',                  default='0.9,0.999',        type=str,       help='betas for Adam optimizer'  )
     parser.add_argument('--dropout',                default=0.5,                type=float,     help='dropout percentage for conv layers')
     parser.add_argument('--kernel_size',            default=3,                  type=int,       help='filter size for the conv layers')
     parser.add_argument('--test_acc_every_batch',   action='store_true',                        help='print acc of every batch during inference')
     parser.add_argument('--train_acc_batches',      default=1000,               type=int,       help='print training progress after this many batches')
     parser.add_argument('--devices',                default='0',                type=str,       help='list of gpu device(s)')
+    parser.add_argument('--resume',                 default='',                 type=str,       help='resume training from this state')
 
     args = parser.parse_args()
-    
+
     os.environ['CUDA_VISIBLE_DEVICES'] = args.devices
     
     # Seed random number
@@ -320,13 +371,14 @@ if __name__ == '__main__':
     weight_decay        = args.weight_decay
     momentum            = args.momentum
     amsgrad             = args.amsgrad
-    beta1               = float(args.betas.split(',')[0])
-    beta2               = float(args.betas.split(',')[1])
     dropout             = args.dropout
     kernel_size         = args.kernel_size
     test_acc_every_batch= args.test_acc_every_batch
     train_acc_batches   = args.train_acc_batches
-    
+    resume              = args.resume
+    start_epoch         = 1
+    max_accuracy        = 0.0
+
     values = args.lr_interval.split()
     lr_interval = []
     for value in values:
@@ -419,7 +471,7 @@ if __name__ == '__main__':
     test_loader     = DataLoader(testset, batch_size=batch_size, shuffle=False)
 
     if architecture[0:3].lower() == 'vgg':
-        model = VGG_SNN_STDB(vgg_name = architecture, activation = activation, labels=labels, timesteps=timesteps, leak=leak, default_threshold=default_threshold, alpha=alpha, beta=beta, dropout=dropout, kernel_size=kernel_size, dataset=dataset)
+        model = VGG_SNN_STDB_IMAGENET(vgg_name = architecture, activation = activation, labels=labels, timesteps=timesteps, leak=leak, default_threshold=default_threshold, alpha=alpha, beta=beta, dropout=dropout, kernel_size=kernel_size, dataset=dataset)
     
     elif architecture[0:3].lower() == 'res':
         model = RESNET_SNN_STDB(resnet_name = architecture, activation = activation, labels=labels, timesteps=timesteps,leak=leak, default_threshold=default_threshold, alpha=alpha, beta=beta, dropout=dropout, dataset=dataset)
@@ -436,18 +488,37 @@ if __name__ == '__main__':
     if pretrained_ann:
       
         state = torch.load(pretrained_ann, map_location='cpu')
-        cur_dict = model.state_dict()     
-        for key in state['state_dict'].keys():
-            if key in cur_dict:
-                if (state['state_dict'][key].shape == cur_dict[key].shape):
-                    cur_dict[key] = nn.Parameter(state['state_dict'][key].data)
-                    f.write('\n Success: Loaded {} from {}'.format(key, pretrained_ann))
-                else:
-                    f.write('\n Error: Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
-            else:
-                f.write('\n Error: Loaded weight {} not present in current model'.format(key))
+        
+        cur_dict = model.state_dict()
+        cur_dict['module.features.0.weight']    = nn.Parameter(state['state_dict']['features.module.0.weight'].data)
+        cur_dict['module.features.3.weight']    = nn.Parameter(state['state_dict']['features.module.3.weight'].data)
+        cur_dict['module.features.6.weight']    = nn.Parameter(state['state_dict']['features.module.6.weight'].data)
+        cur_dict['module.features.9.weight']    = nn.Parameter(state['state_dict']['features.module.9.weight'].data)
+        cur_dict['module.features.12.weight']   = nn.Parameter(state['state_dict']['features.module.12.weight'].data)
+        cur_dict['module.features.15.weight']   = nn.Parameter(state['state_dict']['features.module.15.weight'].data)
+        cur_dict['module.features.18.weight']   = nn.Parameter(state['state_dict']['features.module.18.weight'].data)
+        cur_dict['module.features.21.weight']   = nn.Parameter(state['state_dict']['features.module.21.weight'].data)
+        cur_dict['module.features.24.weight']   = nn.Parameter(state['state_dict']['features.module.24.weight'].data)
+        cur_dict['module.features.27.weight']   = nn.Parameter(state['state_dict']['features.module.27.weight'].data)
+        cur_dict['module.features.30.weight']   = nn.Parameter(state['state_dict']['features.module.30.weight'].data)
+        cur_dict['module.features.33.weight']   = nn.Parameter(state['state_dict']['features.module.33.weight'].data)
+        cur_dict['module.features.36.weight']   = nn.Parameter(state['state_dict']['features.module.36.weight'].data)
+        cur_dict['module.classifier.0.weight']  = nn.Parameter(state['state_dict']['classifier.0.weight'].data)
+        cur_dict['module.classifier.3.weight']  = nn.Parameter(state['state_dict']['classifier.3.weight'].data)
+        cur_dict['module.classifier.6.weight']  = nn.Parameter(state['state_dict']['classifier.6.weight'].data)
+
+
+        # for key in state['state_dict'].keys():
+        #     if key in cur_dict:
+        #         if (state['state_dict'][key].shape == cur_dict[key].shape):
+        #             cur_dict[key] = nn.Parameter(state['state_dict'][key].data)
+        #             f.write('\n Success: Loaded {} from {}'.format(key, pretrained_ann))
+        #         else:
+        #             f.write('\n Error: Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
+        #     else:
+        #         f.write('\n Error: Loaded weight {} not present in current model'.format(key))
         model.load_state_dict(cur_dict)
-        f.write('\n Info: Accuracy of loaded ANN model: {}'.format(state['accuracy']))
+        f.write('\n Info: Top-1 (Top-5) accuracy of loaded ANN model: {}({})'.format(state['acc1'], state['acc5']))
 
         #If thresholds present in loaded ANN file
         if 'thresholds' in state.keys():
@@ -455,7 +526,7 @@ if __name__ == '__main__':
             f.write('\n Info: Thresholds loaded from trained ANN: {}'.format(thresholds))
             model.module.threshold_update(scaling_factor = scaling_factor, thresholds=thresholds[:])
         else:
-            thresholds = find_threshold(batch_size=512, timesteps=1000, architecture=architecture)
+            thresholds = find_threshold(batch_size=32, timesteps=1000, architecture=architecture)
             model.module.threshold_update(scaling_factor = scaling_factor, thresholds=thresholds[:])
             
             #Save the threhsolds in the ANN file
@@ -465,7 +536,7 @@ if __name__ == '__main__':
             temp['thresholds'] = thresholds
             torch.save(temp, pretrained_ann)
     
-    if pretrained_snn:
+    elif pretrained_snn:
                 
         state = torch.load(pretrained_snn, map_location='cpu')
         cur_dict = model.state_dict()     
@@ -502,19 +573,34 @@ if __name__ == '__main__':
     #     params += [value]
     
     if optimizer == 'Adam':
-        optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=amsgrad, weight_decay=weight_decay, betas=(beta1, beta2))
+        optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=amsgrad, weight_decay=weight_decay)
     elif optimizer == 'SGD':
         optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, weight_decay=weight_decay, nesterov=False)
     
-    f.write('\n {}'.format(optimizer))
-        
     # find_threshold() alters the timesteps and leak, restoring it here
     model.module.network_update(timesteps=timesteps, leak=leak)
-    max_accuracy = 0.0
+
+    if resume:
+        temp = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+        model.module.threshold_update(scaling_factor = 1.0, thresholds=temp[:])
+        f.write('\n Resuming from checkpoint {}'.format(resume))
+        checkpoint      = torch.load(resume, map_location='cpu')
+        start_epoch     = checkpoint['epoch']
+        model.load_state_dict(checkpoint['state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = learning_rate
+        model.module.network_update(timesteps=timesteps, leak=leak)
+
+    
+    f.write('\n {}'.format(optimizer))
+        
+    
+    
     #print(model)
     #f.write('\n Threshold: {}'.format(model.module.threshold))
 
-    for epoch in range(1, epochs):
+    for epoch in range(start_epoch, epochs):
         start_time = datetime.datetime.now()
         if not args.test_only:
             train(epoch)

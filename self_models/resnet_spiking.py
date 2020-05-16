@@ -176,20 +176,21 @@ class RESNET_SNN_STDB(nn.Module):
 		self.layer2 		= self._make_layer(block, 128, cfg[self.resnet_name][1], stride=2, dropout=self.dropout)
 		self.layer3 		= self._make_layer(block, 256, cfg[self.resnet_name][2], stride=2, dropout=self.dropout)
 		self.layer4 		= self._make_layer(block, 512, cfg[self.resnet_name][3], stride=2, dropout=self.dropout)
-		self.avgpool 		= nn.AvgPool2d(2)
-		self.classifier     = nn.Sequential(
-									nn.Linear(512*2*2, labels, bias=False)
-									)
+		#self.avgpool 		= nn.AvgPool2d(2)
 		
 		# self.classifier     = nn.Sequential(
-  #                               nn.Linear(512*2*2, 1024, bias=False),
-  #                               nn.ReLU(inplace=True),
-  #                               nn.Dropout(self.dropout),
-  #                               nn.Linear(1024, 1024, bias=False),
-  #                               nn.ReLU(inplace=True),
-  #                               nn.Dropout(self.dropout),
-  #                               nn.Linear(1024, labels, bias=False)
-  #                               )
+		# 							nn.Linear(512*2*2, labels, bias=False)
+		# 							)
+		
+		self.classifier     = nn.Sequential(
+                                nn.Linear(512*2*2, 1024, bias=False),
+                                nn.ReLU(inplace=True),
+                                nn.Dropout(self.dropout),
+                                nn.Linear(1024, 1024, bias=False),
+                                nn.ReLU(inplace=True),
+                                nn.Dropout(self.dropout),
+                                nn.Linear(1024, labels, bias=False)
+                                )
 
 		self.layers = {1: self.layer1, 2: self.layer2, 3: self.layer3, 4:self.layer4}
 

@@ -64,7 +64,7 @@ class LinearSpike(torch.autograd.Function):
         grad       = LinearSpike.gamma*F.threshold(1.0-torch.abs(input), 0, 0)
         return grad*grad_input, None
 
-class VGG_SNN_STDB(nn.Module):
+class VGG_SNN_STDB_IMAGENET(nn.Module):
 
 	def __init__(self, vgg_name, activation='Linear', labels=10, timesteps=100, leak=1.0, default_threshold = 1.0, alpha=0.3, beta=0.01, dropout=0.2, kernel_size=3, dataset='CIFAR10'):
 		super().__init__()
@@ -174,10 +174,10 @@ class VGG_SNN_STDB(nn.Module):
 		if self.dataset == 'IMAGENET':
 			layers += [nn.Linear(512*7*7, 4096, bias=False)]
 			layers += [nn.ReLU(inplace=True)]
-			layers += [nn.Dropout(0.5)]
+			layers += [nn.Dropout(self.dropout)]
 			layers += [nn.Linear(4096, 4096, bias=False)]
 			layers += [nn.ReLU(inplace=True)]
-			layers += [nn.Dropout(0.5)]
+			layers += [nn.Dropout(self.dropout)]
 			layers += [nn.Linear(4096, self.labels, bias=False)]
 
 		elif self.vgg_name == 'VGG5' and self.dataset != 'MNIST':
@@ -262,9 +262,24 @@ class VGG_SNN_STDB(nn.Module):
 			for value in values:
 				value.fill_(-1000)
 
-	def forward(self, x, find_max_mem=False, max_mem_layer=0):
+	def forward(self, x, mem=0, spike=0, mask=0, find_max_mem=False, max_mem_layer=0):
 		
-		self.neuron_init(x)
+		if not isinstance(mem,dict):
+			self.neuron_init(x)
+		else:
+			#pdb.set_trace()
+			self.mem 		= {}
+			self.spike 		= {}
+			self.mask 		= {} 
+			self.batch_size = x.size(0)
+			
+			for key, values in mem.items():
+				self.mem[key] = values.detach()
+			for key, values in spike.items():
+				self.spike[key] = values.detach()
+			for key, values in mask.items():
+				self.mask[key] = values.detach()
+		#pdb.set_trace()
 		max_mem=0.0
 		
 		for t in range(self.timesteps):
@@ -324,7 +339,7 @@ class VGG_SNN_STDB(nn.Module):
 		if find_max_mem:
 			return max_mem
 
-		return self.mem[prev+l+1]
+		return self.mem[prev+l+1], self.mem, self.spike, self.mask
 
 
 
