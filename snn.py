@@ -196,6 +196,7 @@ def test(epoch):
                 data, target = data.cuda(), target.cuda()
             
             output  = model(data) 
+            #pdb.set_trace()
             loss    = F.cross_entropy(output,target)
             pred    = output.max(1,keepdim=True)[1]
             correct = pred.eq(target.data.view_as(pred)).cpu().sum()
@@ -447,6 +448,30 @@ if __name__ == '__main__':
             else:
                 f.write('\n Error: Loaded weight {} not present in current model'.format(key))
         model.load_state_dict(cur_dict)
+        
+        # missing_keys , unexpected_keys = model.load_state_dict(state['state_dict'], strict=False)
+        # loaded_dict = state['state_dict']
+        # cur_dict    = model.state_dict()
+        # for key in unexpected_keys:
+        #     splits = key.split('.')
+        #     if splits[-1]!='running_mean':
+        #         continue
+        #     index = int(splits[-2])
+        #     splits.pop()
+        #     splits.pop()
+        #     w       = '.'.join(splits)+'.'+str(index-1)+'.weight'
+        #     b       = '.'.join(splits)+'.'+str(index-1)+'.bias'
+        #     gamma   = '.'.join(splits)+'.'+str(index)+'.weight'
+        #     var     = '.'.join(splits)+'.'+str(index)+'.running_var'
+        #     mean    = '.'.join(splits)+'.'+str(index)+'.running_mean'
+        #     bias    = '.'.join(splits)+'.'+str(index)+'.bias'
+        #     #pdb.set_trace()
+        #     print(cur_dict[b].max())
+        #     cur_dict[w] = ((loaded_dict[gamma]/loaded_dict[var]).view(loaded_dict[gamma].shape[0],1) * cur_dict[w].cpu().view(cur_dict[w].shape[0],-1)).view(cur_dict[w].shape)
+        #     cur_dict[b] = (loaded_dict[gamma]/loaded_dict[var])*(0 - loaded_dict[mean]) + loaded_dict[bias]
+        #     print(cur_dict[b].max())
+        # model.load_state_dict(cur_dict)
+
         f.write('\n Info: Accuracy of loaded ANN model: {}'.format(state['accuracy']))
 
         #If thresholds present in loaded ANN file
