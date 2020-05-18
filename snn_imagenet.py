@@ -135,7 +135,7 @@ def train(epoch):
     #total_correct = 0
     model.train()
     local_time = datetime.datetime.now()   
-    time_chunks = 20
+    time_chunks = 25
     model.module.network_update(timesteps=time_chunks, leak=leak)
     #current_time = start_time
     #model.module.network_init(update_interval)
@@ -244,11 +244,12 @@ def test(epoch):
             if torch.cuda.is_available() and args.gpu:
                 data, target = data.cuda(), target.cuda()
             
-            output,_,_,_     = model(data) 
+            output,_,_,_    = model(data) 
             loss            = F.cross_entropy(output,target)
             pred            = output.max(1,keepdim=True)[1]
             correct         = pred.eq(target.data.view_as(pred)).cpu().sum()
-
+            #print(output.min())
+            #pdb.set_trace()
             losses.update(loss.item(),data.size(0))
             top1.update(correct.item()/data.size(0), data.size(0))
             
@@ -468,7 +469,7 @@ if __name__ == '__main__':
                             ])) 
 
     train_loader    = DataLoader(trainset, batch_size=batch_size, shuffle=True)
-    test_loader     = DataLoader(testset, batch_size=batch_size, shuffle=False)
+    test_loader     = DataLoader(testset, batch_size=batch_size, shuffle=True)
 
     if architecture[0:3].lower() == 'vgg':
         model = VGG_SNN_STDB_IMAGENET(vgg_name = architecture, activation = activation, labels=labels, timesteps=timesteps, leak=leak, default_threshold=default_threshold, alpha=alpha, beta=beta, dropout=dropout, kernel_size=kernel_size, dataset=dataset)
@@ -488,6 +489,7 @@ if __name__ == '__main__':
     if pretrained_ann:
       
         state = torch.load(pretrained_ann, map_location='cpu')
+
         
         cur_dict = model.state_dict()
         cur_dict['module.features.0.weight']    = nn.Parameter(state['state_dict']['features.module.0.weight'].data)
@@ -517,7 +519,10 @@ if __name__ == '__main__':
         #             f.write('\n Error: Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
         #     else:
         #         f.write('\n Error: Loaded weight {} not present in current model'.format(key))
-        model.load_state_dict(cur_dict)
+       
+        missing_keys, unexpected_keys = model.load_state_dict(cur_dict, strict=False)
+        f.write('\n Missing keys: {}'.format(missing_keys))
+        f.write('\n Unexpected keys: {}'.format(unexpected_keys))
         f.write('\n Info: Top-1 (Top-5) accuracy of loaded ANN model: {}({})'.format(state['acc1'], state['acc5']))
 
         #If thresholds present in loaded ANN file
@@ -591,14 +596,8 @@ if __name__ == '__main__':
         for param_group in optimizer.param_groups:
             param_group['lr'] = learning_rate
         model.module.network_update(timesteps=timesteps, leak=leak)
-
     
     f.write('\n {}'.format(optimizer))
-        
-    
-    
-    #print(model)
-    #f.write('\n Threshold: {}'.format(model.module.threshold))
 
     for epoch in range(start_epoch, epochs):
         start_time = datetime.datetime.now()

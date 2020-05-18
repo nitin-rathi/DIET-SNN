@@ -240,6 +240,12 @@ class VGG_SNN_STDB(nn.Module):
 			if isinstance(self.features[l], nn.Conv2d):
 				self.mem[l] 		= torch.zeros(self.batch_size, self.features[l].out_channels, self.width, self.height).cuda()
 			
+			elif isinstance(self.features[l], nn.ReLU):
+				if isinstance(self.features[l-1], nn.Conv2d):
+					self.spike[l] 	= torch.ones(self.mem[l-1].shape)*(-1000)
+				elif isinstance(self.features[l-1], nn.AvgPool2d):
+					self.spike[l] 	= torch.ones(self.batch_size, self.features[l-2].out_channels, self.width, self.height)*(-1000)
+
 			elif isinstance(self.features[l], nn.Dropout):
 				self.mask[l] = self.features[l](torch.ones(self.mem[l-2].shape).cuda())
 
@@ -254,13 +260,16 @@ class VGG_SNN_STDB(nn.Module):
 			if isinstance(self.classifier[l], nn.Linear):
 				self.mem[prev+l] 		= torch.zeros(self.batch_size, self.classifier[l].out_features).cuda()
 			
+			elif isinstance(self.classifier[l], nn.ReLU):
+				self.spike[prev+l] 		= torch.ones(self.mem[prev+l-1].shape)*(-1000)
+
 			elif isinstance(self.classifier[l], nn.Dropout):
 				self.mask[prev+l] = self.classifier[l](torch.ones(self.mem[prev+l-2].shape).cuda())
 				
-		self.spike = copy.deepcopy(self.mem)
-		for key, values in self.spike.items():
-			for value in values:
-				value.fill_(-1000)
+		# self.spike = copy.deepcopy(self.mem)
+		# for key, values in self.spike.items():
+		# 	for value in values:
+		# 		value.fill_(-1000)
 
 	def forward(self, x, find_max_mem=False, max_mem_layer=0):
 		
@@ -281,10 +290,12 @@ class VGG_SNN_STDB(nn.Module):
 						break
 					
 					mem_thr 		= (self.mem[l]/getattr(self.threshold, 't'+str(l))) - 1.0
-					out 			= self.act_func(mem_thr, (t-1-self.spike[l]))
 					rst 			= getattr(self.threshold, 't'+str(l)) * (mem_thr>0).float()
-					self.spike[l] 	= self.spike[l].masked_fill(out.bool(),t-1)
 					self.mem[l] 	= getattr(self.leak, 'l'+str(l)) *self.mem[l] + self.features[l](out_prev) - rst
+				
+				elif isinstance(self.features[l], nn.ReLU):
+					out 			= self.act_func(mem_thr, (t-1-self.spike[l]))
+					self.spike[l] 	= self.spike[l].masked_fill(out.bool(),t-1)
 					out_prev  		= out.clone()
 
 				elif isinstance(self.features[l], nn.AvgPool2d):
@@ -309,11 +320,13 @@ class VGG_SNN_STDB(nn.Module):
 						break
 
 					mem_thr 			= (self.mem[prev+l]/getattr(self.threshold, 't'+str(prev+l))) - 1.0
-					out 				= self.act_func(mem_thr, (t-1-self.spike[prev+l]))
 					rst 				= getattr(self.threshold,'t'+str(prev+l)) * (mem_thr>0).float()
-					self.spike[prev+l] 	= self.spike[prev+l].masked_fill(out.bool(),t-1)
 					self.mem[prev+l] 	= getattr(self.leak, 'l'+str(prev+l)) * self.mem[prev+l] + self.classifier[l](out_prev) - rst
-					out_prev  		= out.clone()
+				
+				elif isinstance(self.classifier[l], nn.ReLU):
+					out 				= self.act_func(mem_thr, (t-1-self.spike[prev+l]))
+					self.spike[prev+l] 	= self.spike[prev+l].masked_fill(out.bool(),t-1)
+					out_prev  			= out.clone()
 
 				elif isinstance(self.classifier[l], nn.Dropout):
 					out_prev 		= out_prev * self.mask[prev+l]
