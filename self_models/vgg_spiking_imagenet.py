@@ -227,7 +227,7 @@ class VGG_SNN_STDB_IMAGENET(nn.Module):
 
 	def network_update(self, timesteps, leak):
 		self.timesteps 	= timesteps
-		for key in self.leak.keys():
+		for key, value in sorted(self.leak.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
 			if isinstance(leak, list) and leak:
 				self.leak.update({key: nn.Parameter(torch.tensor(leak.pop(0)))})
 	
@@ -277,6 +277,13 @@ class VGG_SNN_STDB_IMAGENET(nn.Module):
 		# 	for value in values:
 		# 		value.fill_(-1000)
 
+	def percentile(self, t, q):
+
+		k = 1 + round(.01 * float(q) * (t.numel() - 1))
+		result = t.view(-1).kthvalue(k).values.item()
+		return result
+
+
 	def forward(self, x, mem=0, spike=0, mask=0, find_max_mem=False, max_mem_layer=0):
 		
 		if not isinstance(mem,dict):
@@ -301,13 +308,14 @@ class VGG_SNN_STDB_IMAGENET(nn.Module):
 			out_prev = x
 			
 			for l in range(len(self.features)):
-				#if l==3:
-					#pdb.set_trace()
+				
 				if isinstance(self.features[l], (nn.Conv2d)):
 					
 					if find_max_mem and l==max_mem_layer:
-						if (self.features[l](out_prev)).max()>max_mem:
-							max_mem = (self.features[l](out_prev)).max()
+						#cur = np.percentile(self.features[l](out_prev).view(-1).cpu().numpy(),99.7)
+						cur = self.percentile(self.features[l](out_prev).view(-1), 99.7)
+						if (cur>max_mem):
+							max_mem = torch.tensor([cur])
 						break
 					
 					mem_thr 		= (self.mem[l]/getattr(self.threshold, 't'+str(l))) - 1.0
@@ -337,15 +345,16 @@ class VGG_SNN_STDB_IMAGENET(nn.Module):
 				if isinstance(self.classifier[l], (nn.Linear)):
 					
 					if find_max_mem and (prev+l)==max_mem_layer:
-						if (self.classifier[l](out_prev)).max()>max_mem:
-							max_mem = (self.classifier[l](out_prev)).max()
+						#cur = np.percentile(self.classifier[l](out_prev).view(-1).cpu().numpy(),99.7)
+						cur = self.percentile(self.classifier[l](out_prev).view(-1),99.7)
+						if cur>max_mem:
+							max_mem = torch.tensor([cur])
 						break
 
 					mem_thr 			= (self.mem[prev+l]/getattr(self.threshold, 't'+str(prev+l))) - 1.0
 					rst 				= getattr(self.threshold,'t'+str(prev+l)) * (mem_thr>0).float()
 					self.mem[prev+l] 	= getattr(self.leak, 'l'+str(prev+l)) * self.mem[prev+l] + self.classifier[l](out_prev) - rst
-					
-
+				
 				elif isinstance(self.classifier[l], nn.ReLU):
 					out 				= self.act_func(mem_thr, (t-1-self.spike[prev+l]))
 					self.spike[prev+l] 	= self.spike[prev+l].masked_fill(out.bool(),t-1)
