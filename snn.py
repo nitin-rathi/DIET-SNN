@@ -183,9 +183,16 @@ def test(epoch):
 
     losses = AverageMeter('Loss')
     top1   = AverageMeter('Acc@1')
-    # for key, value in sorted(model.module.threshold.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
-    #     print(value, end=',')
-    # print('\n')
+    
+    if args.test_only:
+        temp1 = []  
+        temp2 = []  
+        for key, value in sorted(model.module.threshold.items(), key=lambda x: (int(x[0][1:]), (x[1]))):    
+            temp1 = temp1+[round(value.item(),2)]   
+        for key, value in sorted(model.module.leak.items(), key=lambda x: (int(x[0][1:]), (x[1]))): 
+            temp2 = temp2+[round(value.item(),2)]   
+        f.write('\n Thresholds: {}, leak: {}'.format(temp1, temp2))
+
     with torch.no_grad():
         model.eval()
         global max_accuracy
@@ -206,8 +213,10 @@ def test(epoch):
             
             if test_acc_every_batch:
                 
-                f.write('\nAccuracy: {}/{}({:.4f})'
+                f.write('\n Images {}/{} Accuracy: {}/{}({:.4f})'
                     .format(
+                    test_loader.batch_size*(batch_idx+1),
+                    len(test_loader.dataset),
                     correct.item(),
                     data.size(0),
                     top1.avg
@@ -437,41 +446,20 @@ if __name__ == '__main__':
     if pretrained_ann:
       
         state = torch.load(pretrained_ann, map_location='cpu')
-        cur_dict = model.state_dict()     
-        for key in state['state_dict'].keys():
-            if key in cur_dict:
-                if (state['state_dict'][key].shape == cur_dict[key].shape):
-                    cur_dict[key] = nn.Parameter(state['state_dict'][key].data)
-                    f.write('\n Success: Loaded {} from {}'.format(key, pretrained_ann))
-                else:
-                    f.write('\n Error: Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
-            else:
-                f.write('\n Error: Loaded weight {} not present in current model'.format(key))
-        model.load_state_dict(cur_dict)
-        
-        # missing_keys , unexpected_keys = model.load_state_dict(state['state_dict'], strict=False)
-        # loaded_dict = state['state_dict']
-        # cur_dict    = model.state_dict()
-        # for key in unexpected_keys:
-        #     splits = key.split('.')
-        #     if splits[-1]!='running_mean':
-        #         continue
-        #     index = int(splits[-2])
-        #     splits.pop()
-        #     splits.pop()
-        #     w       = '.'.join(splits)+'.'+str(index-1)+'.weight'
-        #     b       = '.'.join(splits)+'.'+str(index-1)+'.bias'
-        #     gamma   = '.'.join(splits)+'.'+str(index)+'.weight'
-        #     var     = '.'.join(splits)+'.'+str(index)+'.running_var'
-        #     mean    = '.'.join(splits)+'.'+str(index)+'.running_mean'
-        #     bias    = '.'.join(splits)+'.'+str(index)+'.bias'
-        #     #pdb.set_trace()
-        #     print(cur_dict[b].max())
-        #     cur_dict[w] = ((loaded_dict[gamma]/loaded_dict[var]).view(loaded_dict[gamma].shape[0],1) * cur_dict[w].cpu().view(cur_dict[w].shape[0],-1)).view(cur_dict[w].shape)
-        #     cur_dict[b] = (loaded_dict[gamma]/loaded_dict[var])*(0 - loaded_dict[mean]) + loaded_dict[bias]
-        #     print(cur_dict[b].max())
+        # cur_dict = model.state_dict()     
+        # for key in state['state_dict'].keys():
+        #     if key in cur_dict:
+        #         if (state['state_dict'][key].shape == cur_dict[key].shape):
+        #             cur_dict[key] = nn.Parameter(state['state_dict'][key].data)
+        #             f.write('\n Success: Loaded {} from {}'.format(key, pretrained_ann))
+        #         else:
+        #             f.write('\n Error: Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
+        #     else:
+        #         f.write('\n Error: Loaded weight {} not present in current model'.format(key))
         # model.load_state_dict(cur_dict)
 
+        missing_keys, unexpected_keys = model.load_state_dict(state['state_dict'], strict=False)
+        f.write('\n Missing keys : {}, Unexpected Keys: {}'.format(missing_keys, unexpected_keys))        
         f.write('\n Info: Accuracy of loaded ANN model: {}'.format(state['accuracy']))
 
         #If thresholds present in loaded ANN file
@@ -480,7 +468,7 @@ if __name__ == '__main__':
             f.write('\n Info: Thresholds loaded from trained ANN: {}'.format(thresholds))
             model.module.threshold_update(scaling_factor = scaling_factor, thresholds=thresholds[:])
         else:
-            thresholds = find_threshold(batch_size=512, timesteps=1000, architecture=architecture)
+            thresholds = find_threshold(batch_size=512, timesteps=500, architecture=architecture)
             model.module.threshold_update(scaling_factor = scaling_factor, thresholds=thresholds[:])
             
             #Save the threhsolds in the ANN file

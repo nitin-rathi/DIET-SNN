@@ -271,15 +271,17 @@ def test(epoch):
             
             if test_acc_every_batch:
                 
-                f.write('\nAccuracy: {}/{}({:.4f})'
+                f.write('\n Images {}/{} Accuracy: {}/{}({:.4f})'
                     .format(
+                    test_loader.batch_size*(batch_idx+1),
+                    len(test_loader.dataset),
                     correct.item(),
                     data.size(0),
                     top1.avg
                     )
                 )
-            if batch_idx==100:
-                break
+            #if batch_idx==100:
+            #    break
         
         temp1 = []
         temp2 = []

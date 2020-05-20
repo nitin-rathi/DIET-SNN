@@ -165,8 +165,6 @@ class VGG_SNN_STDB(nn.Module):
 							]
 				layers += [nn.Dropout(self.dropout)]
 				in_channels = x
-		if self.dataset== 'IMAGENET':
-			layers += [nn.AvgPool2d(kernel_size=2, stride=2)]
 
 		features = nn.Sequential(*layers)
 		
@@ -174,46 +172,46 @@ class VGG_SNN_STDB(nn.Module):
 		if self.dataset == 'IMAGENET':
 			layers += [nn.Linear(512*7*7, 4096, bias=False)]
 			layers += [nn.ReLU(inplace=True)]
-			layers += [nn.Dropout(0.5)]
+			layers += [nn.Dropout(self.dropout)]
 			layers += [nn.Linear(4096, 4096, bias=False)]
 			layers += [nn.ReLU(inplace=True)]
-			layers += [nn.Dropout(0.5)]
+			layers += [nn.Dropout(self.dropout)]
 			layers += [nn.Linear(4096, self.labels, bias=False)]
 
 		elif self.vgg_name == 'VGG5' and self.dataset != 'MNIST':
 			layers += [nn.Linear(512*4*4, 4096, bias=False)]
 			layers += [nn.ReLU(inplace=True)]
-			layers += [nn.Dropout(0.5)]
+			layers += [nn.Dropout(self.dropout)]
 			layers += [nn.Linear(4096, 4096, bias=False)]
 			layers += [nn.ReLU(inplace=True)]
-			layers += [nn.Dropout(0.5)]
+			layers += [nn.Dropout(self.dropout)]
 			layers += [nn.Linear(4096, self.labels, bias=False)]
 		
 		elif self.vgg_name != 'VGG5' and self.dataset != 'MNIST':
 			layers += [nn.Linear(512*2*2, 4096, bias=False)]
 			layers += [nn.ReLU(inplace=True)]
-			layers += [nn.Dropout(0.5)]
+			layers += [nn.Dropout(self.dropout)]
 			layers += [nn.Linear(4096, 4096, bias=False)]
 			layers += [nn.ReLU(inplace=True)]
-			layers += [nn.Dropout(0.5)]
+			layers += [nn.Dropout(self.dropout)]
 			layers += [nn.Linear(4096, self.labels, bias=False)]
 		
 		elif self.vgg_name == 'VGG5' and self.dataset == 'MNIST':
 			layers += [nn.Linear(128*7*7, 4096, bias=False)]
 			layers += [nn.ReLU(inplace=True)]
-			layers += [nn.Dropout(0.5)]
+			layers += [nn.Dropout(self.dropout)]
 			layers += [nn.Linear(4096, 4096, bias=False)]
 			layers += [nn.ReLU(inplace=True)]
-			layers += [nn.Dropout(0.5)]
+			layers += [nn.Dropout(self.dropout)]
 			layers += [nn.Linear(4096, self.labels, bias=False)]
 
 		elif self.vgg_name != 'VGG5' and self.dataset == 'MNIST':
 			layers += [nn.Linear(512*1*1, 4096, bias=False)]
 			layers += [nn.ReLU(inplace=True)]
-			layers += [nn.Dropout(0.5)]
+			layers += [nn.Dropout(self.dropout)]
 			layers += [nn.Linear(4096, 4096, bias=False)]
 			layers += [nn.ReLU(inplace=True)]
-			layers += [nn.Dropout(0.5)]
+			layers += [nn.Dropout(self.dropout)]
 			layers += [nn.Linear(4096, self.labels, bias=False)]
 
 
@@ -222,7 +220,7 @@ class VGG_SNN_STDB(nn.Module):
 
 	def network_update(self, timesteps, leak):
 		self.timesteps 	= timesteps
-		for key in self.leak.keys():
+		for key, value in sorted(self.leak.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
 			if isinstance(leak, list) and leak:
 				self.leak.update({key: nn.Parameter(torch.tensor(leak.pop(0)))})
 	
@@ -238,7 +236,7 @@ class VGG_SNN_STDB(nn.Module):
 		for l in range(len(self.features)):
 								
 			if isinstance(self.features[l], nn.Conv2d):
-				self.mem[l] 		= torch.zeros(self.batch_size, self.features[l].out_channels, self.width, self.height).cuda()
+				self.mem[l] 		= torch.zeros(self.batch_size, self.features[l].out_channels, self.width, self.height)
 			
 			elif isinstance(self.features[l], nn.ReLU):
 				if isinstance(self.features[l-1], nn.Conv2d):
@@ -258,7 +256,7 @@ class VGG_SNN_STDB(nn.Module):
 		for l in range(len(self.classifier)):
 			
 			if isinstance(self.classifier[l], nn.Linear):
-				self.mem[prev+l] 		= torch.zeros(self.batch_size, self.classifier[l].out_features).cuda()
+				self.mem[prev+l] 		= torch.zeros(self.batch_size, self.classifier[l].out_features)
 			
 			elif isinstance(self.classifier[l], nn.ReLU):
 				self.spike[prev+l] 		= torch.ones(self.mem[prev+l-1].shape)*(-1000)
@@ -271,6 +269,12 @@ class VGG_SNN_STDB(nn.Module):
 		# 	for value in values:
 		# 		value.fill_(-1000)
 
+	def percentile(self, t, q):
+
+		k = 1 + round(.01 * float(q) * (t.numel() - 1))
+		result = t.view(-1).kthvalue(k).values.item()
+		return result
+		
 	def forward(self, x, find_max_mem=False, max_mem_layer=0):
 		
 		self.neuron_init(x)
@@ -285,8 +289,9 @@ class VGG_SNN_STDB(nn.Module):
 				if isinstance(self.features[l], (nn.Conv2d)):
 					
 					if find_max_mem and l==max_mem_layer:
-						if (self.features[l](out_prev)).max()>max_mem:
-							max_mem = (self.features[l](out_prev)).max()
+						cur = self.percentile(self.features[l](out_prev).view(-1), 99.7)
+						if (cur>max_mem):
+							max_mem = torch.tensor([cur])
 						break
 					
 					mem_thr 		= (self.mem[l]/getattr(self.threshold, 't'+str(l))) - 1.0
@@ -315,8 +320,9 @@ class VGG_SNN_STDB(nn.Module):
 				if isinstance(self.classifier[l], (nn.Linear)):
 					
 					if find_max_mem and (prev+l)==max_mem_layer:
-						if (self.classifier[l](out_prev)).max()>max_mem:
-							max_mem = (self.classifier[l](out_prev)).max()
+						cur = self.percentile(self.classifier[l](out_prev).view(-1),99.7)
+						if cur>max_mem:
+							max_mem = torch.tensor([cur])
 						break
 
 					mem_thr 			= (self.mem[prev+l]/getattr(self.threshold, 't'+str(prev+l))) - 1.0

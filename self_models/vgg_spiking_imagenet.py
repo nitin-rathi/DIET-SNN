@@ -263,7 +263,7 @@ class VGG_SNN_STDB_IMAGENET(nn.Module):
 		for l in range(len(self.classifier)):
 			
 			if isinstance(self.classifier[l], nn.Linear):
-				self.mem[prev+l] 		= torch.zeros(self.batch_size, self.classifier[l].out_features).cuda()
+				self.mem[prev+l] 		= torch.zeros(self.batch_size, self.classifier[l].out_features)
 			
 			elif isinstance(self.classifier[l], nn.ReLU):
 				self.spike[prev+l] 		= torch.ones(self.mem[prev+l-1].shape)*(-1000)
