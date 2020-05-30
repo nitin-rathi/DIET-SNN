@@ -135,23 +135,24 @@ def train(epoch):
     #total_correct = 0
     model.train()
     local_time = datetime.datetime.now()   
-    time_chunks = 25
+    time_chunks = timesteps
     model.module.network_update(timesteps=time_chunks, leak=leak)
     #current_time = start_time
     #model.module.network_init(update_interval)
+    optimizer.zero_grad()
     
     for batch_idx, (data, target) in enumerate(train_loader):
         
-        if batch_idx <= start_batch:
+        if batch_idx < start_batch:
             continue
         if torch.cuda.is_available() and args.gpu:
             data, target = data.cuda(), target.cuda()
         
         if (batch_idx+1)%32==0:
+            #pdb.set_trace()
             optimizer.step()
             optimizer.zero_grad()
-        if batch_idx == 0:
-            optimizer.zero_grad()
+        
         t = 0
         mem = 0
         mask = 0
@@ -225,10 +226,10 @@ def train(epoch):
             filename = './trained_models/snn/'+identifier+'_train.pth'
             torch.save(state,filename)
         
-        if (batch_idx+1)%25000 == 0:
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = param_group['lr'] / lr_reduce
-                learning_rate = param_group['lr']
+        # if (batch_idx+1)%25000 == 0:
+        #     for param_group in optimizer.param_groups:
+        #         param_group['lr'] = param_group['lr'] / lr_reduce
+        #         learning_rate = param_group['lr']
 
     f.write('\nEpoch: {}, lr: {:.1e}, train_loss: {:.4f}, train_acc: {:.4f}'
                     .format(epoch,
@@ -285,10 +286,10 @@ def test(epoch):
         
         temp1 = []
         temp2 = []
-        for value in model.module.threshold.values():
-            temp1 = temp1+[value.item()]    
-        for value in model.module.leak.values():
-            temp2 = temp2+[value.item()]
+        for key, value in sorted(model.module.threshold.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
+                temp1 = temp1+[value.item()]
+        for key, value in sorted(model.module.leak.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
+                temp2 = temp2+[value.item()]
         
         if epoch>5 and top1.avg<0.15:
             f.write('\n Quitting as the training is not progressing')
@@ -582,21 +583,15 @@ if __name__ == '__main__':
         leak       = state['leak']
         model.module.threshold_update(scaling_factor = 1.0, thresholds=thresholds[:])
         model.module.network_update(timesteps=timesteps, leak=leak)
-        
-
-    f.write('\n {}'.format(model))
     
-    #model = nn.DataParallel(model) 
+    f.write('\n {}'.format(model))
+        
     if torch.cuda.is_available() and args.gpu:
         model.cuda()
-   
-    if optimizer == 'Adam':
-        optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=amsgrad, weight_decay=weight_decay)
-    elif optimizer == 'SGD':
-        optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, weight_decay=weight_decay, nesterov=False)
-    
-    # find_threshold() alters the timesteps and leak, restoring it here
-    model.module.network_update(timesteps=timesteps, leak=leak)
+    # if optimizer == 'Adam':
+    #     optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=amsgrad, weight_decay=weight_decay)
+    # elif optimizer == 'SGD':
+    #     optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, weight_decay=weight_decay, nesterov=False)
 
     if resume:
         f.write('\n Resuming from checkpoint {}'.format(resume))
@@ -627,17 +622,38 @@ if __name__ == '__main__':
         model.module.threshold_update(scaling_factor = 1.0, thresholds=thresholds[:])
         model.module.network_update(timesteps=timesteps, leak=leak)
         
+        if optimizer == 'Adam':
+            optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=amsgrad, weight_decay=weight_decay)
+        elif optimizer == 'SGD':
+            optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, weight_decay=weight_decay, nesterov=False)
+        
         start_epoch     = state['epoch']
         start_batch     = state['batch']
         accuracy        = state['accuracy']
+        #pdb.set_trace()
         optimizer.load_state_dict(state['optimizer'])
         for param_group in optimizer.param_groups:
-            learning_rate =  param_group['lr']
-
+            #learning_rate =  param_group['lr']
+            param_group['lr'] = learning_rate
+        start_epoch = start_epoch + 1
+        start_batch = 0
         f.write('\n Loaded from resume epoch: {}, batch: {} accuracy: {:.4f} lr: {:.1e}'.format(start_epoch, start_batch, accuracy, learning_rate))
-        
     
-    f.write('\n {}'.format(optimizer))
+    else:
+        f.write('\n {}'.format(model))
+        
+        if torch.cuda.is_available() and args.gpu:
+            model.cuda()
+    
+        if optimizer == 'Adam':
+            optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=amsgrad, weight_decay=weight_decay)
+        elif optimizer == 'SGD':
+            optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, weight_decay=weight_decay, nesterov=False)
+        
+        # find_threshold() alters the timesteps and leak, restoring it here
+        model.module.network_update(timesteps=timesteps, leak=leak)
+        
+        f.write('\n {}'.format(optimizer))
 
     for epoch in range(start_epoch, epochs):
         start_time = datetime.datetime.now()

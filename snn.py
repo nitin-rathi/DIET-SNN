@@ -127,7 +127,7 @@ def train(epoch):
     #total_loss = 0.0
     #total_correct = 0
     model.train()
-       
+    local_time = datetime.datetime.now()  
     #current_time = start_time
     #model.module.network_init(update_interval)
 
@@ -161,16 +161,18 @@ def train(epoch):
                 temp1 = temp1+[round(value.item(),2)]
             for key, value in sorted(model.module.leak.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
                 temp2 = temp2+[round(value.item(),2)]
-            f.write('\n\nEpoch: {}, batch: {}, train_loss: {:.4f}, train_acc: {:.4f}, threshold: {}, leak: {}, timesteps: {}'
+            f.write('\n\nEpoch: {}, batch: {}, train_loss: {:.4f}, train_acc: {:.4f}, threshold: {}, leak: {}, timesteps: {}, time: {}'
                     .format(epoch,
                         batch_idx+1,
                         losses.avg,
                         top1.avg,
                         temp1,
                         temp2,
-                        model.module.timesteps
+                        model.module.timesteps,
+                        datetime.timedelta(seconds=(datetime.datetime.now() - local_time).seconds)
                         )
                     )
+            local_time = datetime.datetime.now()
     f.write('\nEpoch: {}, lr: {:.1e}, train_loss: {:.4f}, train_acc: {:.4f}'
                     .format(epoch,
                         learning_rate,
@@ -225,10 +227,10 @@ def test(epoch):
         
         temp1 = []
         temp2 = []
-        for value in model.module.threshold.values():
-            temp1 = temp1+[value.item()]    
-        for value in model.module.leak.values():
-            temp2 = temp2+[value.item()]
+        for key, value in sorted(model.module.threshold.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
+                temp1 = temp1+[value.item()]
+        for key, value in sorted(model.module.leak.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
+                temp2 = temp2+[value.item()]
         
         if epoch>5 and top1.avg<0.15:
             f.write('\n Quitting as the training is not progressing')
@@ -298,6 +300,7 @@ if __name__ == '__main__':
     parser.add_argument('--test_acc_every_batch',   action='store_true',                        help='print acc of every batch during inference')
     parser.add_argument('--train_acc_batches',      default=1000,               type=int,       help='print training progress after this many batches')
     parser.add_argument('--devices',                default='0',                type=str,       help='list of gpu device(s)')
+    parser.add_argument('--resume',                 default='',                 type=str,       help='resume training from this state')
 
     args = parser.parse_args()
     
@@ -336,6 +339,9 @@ if __name__ == '__main__':
     kernel_size         = args.kernel_size
     test_acc_every_batch= args.test_acc_every_batch
     train_acc_batches   = args.train_acc_batches
+    resume              = args.resume
+    start_epoch         = 1
+    max_accuracy        = 0.0
     
     values = args.lr_interval.split()
     lr_interval = []
@@ -478,7 +484,7 @@ if __name__ == '__main__':
             temp['thresholds'] = thresholds
             torch.save(temp, pretrained_ann)
     
-    if pretrained_snn:
+    elif pretrained_snn:
                 
         state = torch.load(pretrained_snn, map_location='cpu')
         cur_dict = model.state_dict()     
@@ -523,11 +529,37 @@ if __name__ == '__main__':
         
     # find_threshold() alters the timesteps and leak, restoring it here
     model.module.network_update(timesteps=timesteps, leak=leak)
-    max_accuracy = 0.0
-    #print(model)
-    #f.write('\n Threshold: {}'.format(model.module.threshold))
+    
+    if resume:
+        f.write('\n Resuming from checkpoint {}'.format(resume))
+        state = torch.load(resume, map_location='cpu')
+        cur_dict = model.state_dict()     
+        for key in state['state_dict'].keys():
+            if key in cur_dict:
+                if (state['state_dict'][key].shape == cur_dict[key].shape):
+                    cur_dict[key] = nn.Parameter(state['state_dict'][key].data)
+                    f.write('\n Success: Loaded {} from {}'.format(key, pretrained_ann))
+                else:
+                    f.write('\n Error: Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
+            else:
+                f.write('\n Error: Loaded weight {} not present in current model'.format(key))
+        model.load_state_dict(cur_dict)
 
-    for epoch in range(1, epochs):
+        thresholds = state['thresholds']
+        leak       = state['leak']
+        model.module.threshold_update(scaling_factor = 1.0, thresholds=thresholds[:])
+        model.module.network_update(timesteps=timesteps, leak=leak[:])
+        
+        start_epoch     = state['epoch']
+        max_accuracy    = state['accuracy']
+        optimizer.load_state_dict(state['optimizer'])
+        for param_group in optimizer.param_groups:
+            learning_rate =  param_group['lr']
+
+        f.write('\n Loaded from resume epoch: {}, accuracy: {:.4f} lr: {:.1e}'.format(start_epoch, max_accuracy, learning_rate))
+
+
+    for epoch in range(start_epoch, epochs):
         start_time = datetime.datetime.now()
         if not args.test_only:
             train(epoch)

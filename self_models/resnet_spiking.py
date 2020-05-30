@@ -98,31 +98,40 @@ class BasicBlock(nn.Module):
         # for s in spike:
         # 	s.detach_()
 
+        #conv1
         mem_thr 		= (mem[pos]/getattr(threshold, 't'+str(pos))) - 1.0
-        out 			= act_func(mem_thr, (t-1-spike[pos]))
         rst 			= getattr(threshold, 't'+str(pos)) * (mem_thr>0).float()
-        spike[pos] 		= spike[pos].masked_fill(out.bool(),t-1)
         mem[pos] 		= getattr(leak, 'l'+str(pos)) *mem[pos] + self.residual[0](inp) - rst
+
+        #relu1
+        out 			= act_func(mem_thr, (t-1-spike[pos]))
+        spike[pos] 		= spike[pos].masked_fill(out.bool(),t-1)
         out_prev  		= out.clone()
 	
+		#dropout1
         out_prev 		= out_prev * mask[pos]
-	
+		
+		#conv2+identity
         mem_thr 		= (mem[pos+1]/getattr(threshold, 't'+str(pos+1))) - 1.0
-        out 			= act_func(mem_thr, (t-1-spike[pos+1]))
         rst 			= getattr(threshold, 't'+str(pos+1)) * (mem_thr>0).float()
+        mem[pos+1] 		= getattr(leak, 'l'+str(pos+1))*mem[pos+1] + self.residual[3](out_prev) + self.identity(inp) - rst
+
+        #relu2
+        out 			= act_func(mem_thr, (t-1-spike[pos+1]))
         spike[pos+1]	= spike[pos+1].masked_fill(out.bool(),t-1)
-        
+        out_prev  	= out.clone()
+
         #if find_max_mem:
         #	return (self.delay_path[2](out_prev) + self.shortcut(inp)).max()
         #if t==199:
         #	print((self.delay_path[3](out_prev) + self.shortcut(inp)).max())
         #if len(self.shortcut)>0:
         
-        mem[pos+1] 		= getattr(leak, 'l'+str(pos+1))*mem[pos+1] + self.residual[3](out_prev) + self.identity(inp) - rst
+        
         #else:
         #	mem[1] 		= leak_mem*mem[1] + self.delay_path[1](out_prev) + inp - rst
         
-        out_prev  	= out.clone()
+        
         
         #result				= {}
         #result['out_prev'] 	= out.clone()
@@ -289,7 +298,7 @@ class RESNET_SNN_STDB(nn.Module):
 
 	def network_update(self, timesteps, leak):
 		self.timesteps 	= timesteps
-		for key in sorted(self.leak.keys()):
+		for key, value in sorted(self.leak.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
 			if isinstance(leak, list) and leak:
 				self.leak.update({key: nn.Parameter(torch.tensor(leak.pop(0)))})
 	
@@ -354,17 +363,15 @@ class RESNET_SNN_STDB(nn.Module):
 			elif isinstance(self.classifier[l], nn.Dropout):
 				self.mask[pos+l] 	= self.classifier[l](torch.ones(self.mem[pos+l-2].shape))
 
+	def percentile(self, t, q):
+		k = 1 + round(.01 * float(q) * (t.numel() - 1))
+		result = t.view(-1).kthvalue(k).values.item()
+		return result
+
 	def forward(self, x, find_max_mem=False, max_mem_layer=0):
 		
 		self.neuron_init(x)
-		
-		# for key, values in self.mem.items():
-		# 	values[0].detach_()
-		# for key, values in self.spike.items():
-		# 	values[0].detach_()
-		# for key, values in self.mask.items():
-		# 	values.detach_()
-
+			
 		max_mem = 0.0
 		#pdb.set_trace()
 		for t in range(self.timesteps):
@@ -376,19 +383,18 @@ class RESNET_SNN_STDB(nn.Module):
 				if isinstance(self.pre_process[l], nn.Conv2d):
 					
 					if find_max_mem and l==max_mem_layer:
-						if (self.pre_process[l](out_prev)).max()>max_mem:
-							max_mem = (self.pre_process[l](out_prev)).max()
+						cur = self.percentile(self.pre_process[l](out_prev).view(-1), 99.7)
+						if (cur>max_mem):
+							max_mem = torch.tensor([cur])
 						break
 
 					mem_thr 		= (self.mem[l]/getattr(self.threshold, 't'+str(l))) - 1.0
-					out 			= self.act_func(mem_thr, (t-1-self.spike[l]))
 					rst 			= getattr(self.threshold, 't'+str(l)) * (mem_thr>0).float()
-					self.spike[l] 	= self.spike[l].masked_fill(out.bool(),t-1)
-					
-					# print('mem:{} l:{}'.format(self.mem[l][0].shape, l))
-					# print('pre:{} l:{}'.format((self.pre_process[l](out_prev)).shape,l))
-					# print('rst:{} l:{}'.format(rst.shape,l))
 					self.mem[l] 	= getattr(self.leak, 'l'+str(l)) *self.mem[l] + self.pre_process[l](out_prev) - rst
+					
+				elif isinstance(self.pre_process[l], nn.ReLU):
+					out 			= self.act_func(mem_thr, (t-1-self.spike[l-1]))
+					self.spike[l-1] 	= self.spike[l-1].masked_fill(out.bool(),t-1)
 					out_prev  		= out.clone()
 
 				elif isinstance(self.pre_process[l], nn.AvgPool2d):
