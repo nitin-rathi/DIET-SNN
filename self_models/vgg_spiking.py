@@ -95,16 +95,21 @@ class VGG_SNN_STDB(nn.Module):
 		lk 	  		= {}
 		for l in range(len(self.features)):
 			if isinstance(self.features[l], nn.Conv2d):
-				threshold['t'+str(l)] 	= nn.Parameter(torch.tensor([default_threshold]))
-				lk['l'+str(l)]			= nn.Parameter(torch.tensor([leak]))
+				threshold['t'+str(l)] 	= nn.Parameter(torch.tensor(default_threshold))
+				lk['l'+str(l)]			= nn.Parameter(torch.tensor(leak))
+				#threshold['t'+str(l)] 	= nn.Parameter(torch.empty(1,1).fill_(default_threshold))
+				#lk['l'+str(l)]			= nn.Parameter(torch.empty(1,1).fill_(leak))
 				
 				
 		prev = len(self.features)
 		for l in range(len(self.classifier)-1):
 			if isinstance(self.classifier[l], nn.Linear):
-				threshold['t'+str(prev+l)] 	= nn.Parameter(torch.tensor([default_threshold]))
-				lk['l'+str(prev+l)] 		= nn.Parameter(torch.tensor([leak]))
+				threshold['t'+str(prev+l)] 	= nn.Parameter(torch.tensor(default_threshold))
+				lk['l'+str(prev+l)] 		= nn.Parameter(torch.tensor(leak))
+				#threshold['t'+str(prev+l)] 	= nn.Parameter(torch.empty(1,1).fill_(default_threshold))
+				#lk['l'+str(prev+l)] 		= nn.Parameter(torch.empty(1,1).fill_(leak))
 
+		#pdb.set_trace()
 		self.threshold 	= nn.ParameterDict(threshold)
 		self.leak 		= nn.ParameterDict(lk)
 		
@@ -220,9 +225,9 @@ class VGG_SNN_STDB(nn.Module):
 
 	def network_update(self, timesteps, leak):
 		self.timesteps 	= timesteps
-		for key, value in sorted(self.leak.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
-			if isinstance(leak, list) and leak:
-				self.leak.update({key: nn.Parameter(torch.tensor(leak.pop(0)))})
+		#for key, value in sorted(self.leak.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
+		#	if isinstance(leak, list) and leak:
+		#		self.leak.update({key: nn.Parameter(torch.tensor(leak.pop(0)))})
 	
 	def neuron_init(self, x):
 		self.batch_size = x.size(0)
@@ -279,7 +284,7 @@ class VGG_SNN_STDB(nn.Module):
 		
 		self.neuron_init(x)
 		max_mem=0.0
-		
+		#pdb.set_trace()
 		for t in range(self.timesteps):
 			out_prev = x
 			

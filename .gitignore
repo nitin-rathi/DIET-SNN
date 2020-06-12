@@ -2,4 +2,7 @@ logs
 trained_models
 __pycache__
 script.sh
-*.ods
+*.ods*
+*.pdf
+*.gv
+*.txt

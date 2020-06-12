@@ -66,15 +66,15 @@ class BasicBlock(nn.Module):
         #super(BasicBlock, self).__init__()
         super().__init__()
 
-        self.residual = nn.Sequential(
+        self.delay_path = nn.Sequential(
             nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False),
             )
-        self.identity = nn.Sequential()
+        self.shortcut = nn.Sequential()
         if stride != 1 or in_planes != self.expansion*planes:
-            self.identity = nn.Sequential(
+            self.shortcut = nn.Sequential(
                 nn.Conv2d(in_planes, self.expansion*planes, kernel_size=1, stride=stride, bias=False),
                 #nn.BatchNorm2d(self.expansion*planes)
             )
@@ -92,16 +92,18 @@ class BasicBlock(nn.Module):
         t 				= dic['t']
         leak			= dic['leak']
         #find_max_mem 	= dic['find_max_mem']
-        inp				= out_prev.clone()
+        #inp 			= torch.empty((2,2))
+        #inp				= inp.new_tensor(out_prev.data)
+        inp 			= dic['out_prev']
         # for m in mem:
         # 	m.detach_()
         # for s in spike:
         # 	s.detach_()
-
+        
         #conv1
         mem_thr 		= (mem[pos]/getattr(threshold, 't'+str(pos))) - 1.0
         rst 			= getattr(threshold, 't'+str(pos)) * (mem_thr>0).float()
-        mem[pos] 		= getattr(leak, 'l'+str(pos)) *mem[pos] + self.residual[0](inp) - rst
+        mem[pos] 		= getattr(leak, 'l'+str(pos)) *mem[pos] + self.delay_path[0](out_prev) - rst
 
         #relu1
         out 			= act_func(mem_thr, (t-1-spike[pos]))
@@ -111,10 +113,10 @@ class BasicBlock(nn.Module):
 		#dropout1
         out_prev 		= out_prev * mask[pos]
 		
-		#conv2+identity
+		#conv2+shortcut
         mem_thr 		= (mem[pos+1]/getattr(threshold, 't'+str(pos+1))) - 1.0
         rst 			= getattr(threshold, 't'+str(pos+1)) * (mem_thr>0).float()
-        mem[pos+1] 		= getattr(leak, 'l'+str(pos+1))*mem[pos+1] + self.residual[3](out_prev) + self.identity(inp) - rst
+        mem[pos+1] 		= getattr(leak, 'l'+str(pos+1))*mem[pos+1] + self.delay_path[3](out_prev) + self.shortcut(inp) - rst
 
         #relu2
         out 			= act_func(mem_thr, (t-1-spike[pos+1]))
@@ -141,7 +143,7 @@ class BasicBlock(nn.Module):
         #pdb.set_trace()
         return out_prev
 
-class RESNET_SNN_STDB(nn.Module):
+class RESNET_SNN_STDB_IMAGENET(nn.Module):
 	
 	#all_layers = []
 	#drop 		= 0.2
@@ -174,7 +176,7 @@ class RESNET_SNN_STDB(nn.Module):
                                 nn.Dropout(self.dropout),
                                 nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1, bias=False),
                                 nn.ReLU(),
-                                nn.AvgPool2d(2)
+                                nn.AvgPool2d(3)
                                 )
 		block 				= BasicBlock
 		self.in_planes      = 64
@@ -183,10 +185,10 @@ class RESNET_SNN_STDB(nn.Module):
 		self.layer2 		= self._make_layer(block, 128, cfg[self.resnet_name][1], stride=2, dropout=self.dropout)
 		self.layer3 		= self._make_layer(block, 256, cfg[self.resnet_name][2], stride=2, dropout=self.dropout)
 		self.layer4 		= self._make_layer(block, 512, cfg[self.resnet_name][3], stride=2, dropout=self.dropout)
-		#self.avgpool 		= nn.AvgPool2d(2)
+		self.avgpool 		= nn.AvgPool2d(7)
 		
 		self.classifier     = nn.Sequential(
-									nn.Linear(512*2*2, labels, bias=False)
+									nn.Linear(512, labels, bias=False)
 									)
 		
 		# self.classifier     = nn.Sequential(
@@ -199,7 +201,9 @@ class RESNET_SNN_STDB(nn.Module):
   #                               nn.Linear(1024, labels, bias=False)
   #                               )
 
-		self.layers = {1: self.layer1, 2: self.layer2, 3: self.layer3, 4:self.layer4}
+		#self.layers = {1: self.layer1, 2: self.layer2, 3: self.layer3, 4:self.layer4}
+		#self.layers = nn.Sequential(self.layer1, self.layer2, self.layer3, self.layer4)
+		#pdb.set_trace()
 
 		self._initialize_weights2()
 		
@@ -214,11 +218,10 @@ class RESNET_SNN_STDB(nn.Module):
 		pos = len(self.pre_process)
 				
 		for i in range(1,5):
-
-			layer = self.layers[i]
+			layer = getattr(self,'layer'+str(i))
 			for index in range(len(layer)):
-				for l in range(len(layer[index].residual)):
-					if isinstance(layer[index].residual[l],nn.Conv2d):
+				for l in range(len(layer[index].delay_path)):
+					if isinstance(layer[index].delay_path[l],nn.Conv2d):
 						threshold['t'+str(pos)] = nn.Parameter(torch.tensor(default_threshold))
 						lk['l'+str(pos)] 		= nn.Parameter(torch.tensor(leak))
 						pos=pos+1
@@ -264,10 +267,10 @@ class RESNET_SNN_STDB(nn.Module):
 
 		pos = len(self.pre_process)
 		for i in range(1,5):
-			layer = self.layers[i]
+			layer = getattr(self,'layer'+str(i))
 			for index in range(len(layer)):
-				for l in range(len(layer[index].residual)):
-					if isinstance(layer[index].residual[l],nn.Conv2d):
+				for l in range(len(layer[index].delay_path)):
+					if isinstance(layer[index].delay_path[l],nn.Conv2d):
 						#self.threshold[pos].data = torch.tensor(thresholds.pop(0)*self.scaling_factor)
 						pos = pos+1
 
@@ -305,8 +308,8 @@ class RESNET_SNN_STDB(nn.Module):
 	def neuron_init(self, x):
 		
 		self.batch_size = x.size(0)
-		self.width 		= x.size(2)
-		self.height 	= x.size(3)
+		#self.width 		= x.size(2)
+		#self.height 	= x.size(3)
 
 		self.mem 	= {}
 		self.spike 	= {}
@@ -316,7 +319,9 @@ class RESNET_SNN_STDB(nn.Module):
 		for l in range(len(self.pre_process)):
 			
 			if isinstance(self.pre_process[l], nn.Conv2d):
-				self.mem[l] = torch.zeros(self.batch_size, self.pre_process[l].out_channels, self.width, self.height)
+				#self.mem[l] = torch.zeros(self.batch_size, self.pre_process[l].out_channels, self.width, self.height)
+				self.mem[l] = torch.zeros(self.pre_process[l](x).shape)
+				x 			= self.pre_process[l](x)
 				self.spike[l] = torch.ones(self.mem[l].shape)*(-1000)
 				#self.register_buffer('mem[l]', torch.zeros(self.batch_size, self.pre_process[l].out_channels, self.width, self.height))
 				#self.register_buffer('spike[l]', torch.ones(self.mem[l].shape)*(-1000))
@@ -324,29 +329,33 @@ class RESNET_SNN_STDB(nn.Module):
 			elif isinstance(self.pre_process[l], nn.Dropout):
 				self.mask[l] = self.pre_process[l](torch.ones(self.mem[l-2].shape))
 			elif isinstance(self.pre_process[l], nn.AvgPool2d):
-				
-				self.width 	= self.width//self.pre_process[l].kernel_size
-				self.height = self.height//self.pre_process[l].kernel_size 
+				x 			= self.pre_process[l](x)
+				#self.width 	= int(self.width/self.pre_process[l].kernel_size)
+				#self.height = int(self.height/self.pre_process[l].kernel_size) 
 
 		pos = len(self.pre_process)
 		for i in range(1,5):
-			layer = self.layers[i]
-			self.width = self.width//layer[0].residual[0].stride[0]
-			self.height = self.height//layer[0].residual[0].stride[0]
+			layer = getattr(self,'layer'+str(i))
+			#self.width = math.ceil(self.width/layer[0].delay_path[0].stride[0])
+			#self.height = math.ceil(self.height/layer[0].delay_path[0].stride[0])
 			for index in range(len(layer)):
-				for l in range(len(layer[index].residual)):
-					if isinstance(layer[index].residual[l],nn.Conv2d):
-						self.mem[pos] = torch.zeros(self.batch_size, layer[index].residual[l].out_channels, self.width, self.height)
+				for l in range(len(layer[index].delay_path)):
+					if isinstance(layer[index].delay_path[l],nn.Conv2d):
+						#self.mem[pos] = torch.zeros(self.batch_size, layer[index].delay_path[l].out_channels, self.width, self.height)
+						self.mem[pos] 	= torch.zeros(layer[index].delay_path[l](x).shape)
+						x 				= layer[index].delay_path[l](x)
 						self.spike[pos] = torch.ones(self.mem[pos].shape)*(-1000)
-						#self.register_buffer('mem[pos]', torch.zeros(self.batch_size, layer[index].residual[l].out_channels, self.width, self.height))
+						#self.register_buffer('mem[pos]', torch.zeros(self.batch_size, layer[index].delay_path[l].out_channels, self.width, self.height))
 						#self.register_buffer('spike[pos]', torch.ones(self.mem[pos].shape)*(-1000))
 						pos = pos + 1
-					elif isinstance(layer[index].residual[l],nn.Dropout):
-						self.mask[pos-1] = layer[index].residual[l](torch.ones(self.mem[pos-1].shape))
+					elif isinstance(layer[index].delay_path[l],nn.Dropout):
+						self.mask[pos-1] = layer[index].delay_path[l](torch.ones(self.mem[pos-1].shape))
 		
 		#average pooling before final layer
-		#self.width 	= self.width//self.avgpool.kernel_size
-		#self.height = self.height//self.avgpool.kernel_size
+		x 			= self.avgpool(x)
+		x 			= x.reshape(x.shape[0],-1)
+		#self.width 	= int(self.width/self.avgpool.kernel_size)
+		#self.height = int(self.height/self.avgpool.kernel_size)
 
 		#final classifier layer
 		#self.mem[pos] = torch.zeros(self.batch_size, self.classifier[0].out_features)
@@ -358,7 +367,9 @@ class RESNET_SNN_STDB(nn.Module):
 
 		for l in range(len(self.classifier)):
 			if isinstance(self.classifier[l],nn.Linear):
-				self.mem[pos+l] 	= torch.zeros(self.batch_size, self.classifier[l].out_features)
+				#self.mem[pos+l] 	= torch.zeros(self.batch_size, self.classifier[l].out_features)
+				self.mem[pos+l] 	= torch.zeros(self.classifier[l](x).shape)
+				x 					= self.classifier[l](x)
 				self.spike[pos+l] 	= torch.ones(self.mem[pos+l].shape)*(-1000)
 			elif isinstance(self.classifier[l], nn.Dropout):
 				self.mask[pos+l] 	= self.classifier[l](torch.ones(self.mem[pos+l-2].shape))
@@ -368,16 +379,17 @@ class RESNET_SNN_STDB(nn.Module):
 		result = t.view(-1).kthvalue(k).values.item()
 		return result
 
-	def forward(self, x, find_max_mem=False, max_mem_layer=0):
+	def forward(self, x, mem=0, spike=0, mask=0, find_max_mem=False, max_mem_layer=0):
 		
 		self.neuron_init(x)
-			
 		max_mem = 0.0
 		#pdb.set_trace()
+		
 		for t in range(self.timesteps):
 
 			out_prev = x
-					
+			#pdb.set_trace()
+			
 			for l in range(len(self.pre_process)):
 							
 				if isinstance(self.pre_process[l], nn.Conv2d):
@@ -407,14 +419,16 @@ class RESNET_SNN_STDB(nn.Module):
 				continue
 				
 			pos 	= len(self.pre_process)
-			
+			#pdb.set_trace()
+			#print(self.layers[1][0].delay_path[0].weight.device)
+			#exit()
 			for i in range(1,5):
-				layer = self.layers[i]
+				layer = getattr(self,'layer'+str(i))
 				for index in range(len(layer)):
-					out_prev = layer[index]({'out_prev':out_prev.clone(), 'pos': pos, 'act_func': self.act_func, 'mem':self.mem, 'spike':self.spike, 'mask':self.mask, 'threshold':self.threshold, 't': t, 'leak':self.leak})
+					out_prev = layer[index]({'out_prev':out_prev, 'pos': pos, 'act_func': self.act_func, 'mem':self.mem, 'spike':self.spike, 'mask':self.mask, 'threshold':self.threshold, 't': t, 'leak':self.leak})
 					pos = pos+2
 			
-			#out_prev = self.avgpool(out_prev)
+			out_prev = self.avgpool(out_prev)
 			out_prev = out_prev.reshape(self.batch_size, -1)
 
 			for l in range(len(self.classifier)-1):
@@ -441,6 +455,7 @@ class RESNET_SNN_STDB(nn.Module):
 				if len(self.classifier)>1:
 					self.mem[pos+l+1] 		= self.mem[pos+l+1] + self.classifier[l+1](out_prev)
 				else:
+					
 					self.mem[pos] 			= self.mem[pos] + self.classifier[0](out_prev)
 		
 		if find_max_mem:
@@ -449,4 +464,4 @@ class RESNET_SNN_STDB(nn.Module):
 		if len(self.classifier)>1:
 			return self.mem[pos+l+1]
 		else:
-			return self.mem[pos]	
+			return self.mem[pos],self.mem, self.spike, self.mask	

@@ -95,15 +95,15 @@ class VGG_SNN_STDB_IMAGENET(nn.Module):
 		lk 	  		= {}
 		for l in range(len(self.features)):
 			if isinstance(self.features[l], nn.Conv2d):
-				threshold['t'+str(l)] 	= nn.Parameter(torch.tensor([default_threshold]))
-				lk['l'+str(l)]			= nn.Parameter(torch.tensor([leak]))
+				threshold['t'+str(l)] 	= nn.Parameter(torch.tensor(default_threshold))
+				lk['l'+str(l)]			= nn.Parameter(torch.tensor(leak))
 				
 				
 		prev = len(self.features)
 		for l in range(len(self.classifier)-1):
 			if isinstance(self.classifier[l], nn.Linear):
-				threshold['t'+str(prev+l)] 	= nn.Parameter(torch.tensor([default_threshold]))
-				lk['l'+str(prev+l)] 		= nn.Parameter(torch.tensor([leak]))
+				threshold['t'+str(prev+l)] 	= nn.Parameter(torch.tensor(default_threshold))
+				lk['l'+str(prev+l)] 		= nn.Parameter(torch.tensor(leak))
 
 		self.threshold 	= nn.ParameterDict(threshold)
 		self.leak 		= nn.ParameterDict(lk)
@@ -234,21 +234,21 @@ class VGG_SNN_STDB_IMAGENET(nn.Module):
 		# 	if isinstance(leak, list) and leak:
 		# 		self.leak.update({key: nn.Parameter(torch.tensor(leak.pop(0)))})
 
-		for pos in range(len(self.features)):
-			if isinstance(self.features[pos], nn.Conv2d):
-				if isinstance(leak, list) and leak:
-					value = leak.pop(0)
-					self.leak.update({'l'+str(pos): nn.Parameter(torch.tensor([value]))})
-					setattr(self.leak, 'l'+str(pos), nn.Parameter(torch.tensor([value])))
+		# for pos in range(len(self.features)):
+		# 	if isinstance(self.features[pos], nn.Conv2d):
+		# 		if isinstance(leak, list) and leak:
+		# 			value = leak.pop(0)
+		# 			self.leak.update({'l'+str(pos): nn.Parameter(torch.tensor([value]))})
+		# 			setattr(self.leak, 'l'+str(pos), nn.Parameter(torch.tensor([value])))
 		
-		prev = len(self.features)
+		# prev = len(self.features)
 		
-		for pos in range(len(self.classifier)-1):
-			if isinstance(self.classifier[pos], nn.Linear):
-				if isinstance(leak, list) and leak:
-					value = leak.pop(0)
-					self.leak.update({'l'+str(prev+pos): nn.Parameter(torch.tensor([value]))})
-					setattr(self.leak, 'l'+str(prev+pos), nn.Parameter(torch.tensor([value])))
+		# for pos in range(len(self.classifier)-1):
+		# 	if isinstance(self.classifier[pos], nn.Linear):
+		# 		if isinstance(leak, list) and leak:
+		# 			value = leak.pop(0)
+		# 			self.leak.update({'l'+str(prev+pos): nn.Parameter(torch.tensor([value]))})
+		# 			setattr(self.leak, 'l'+str(prev+pos), nn.Parameter(torch.tensor([value])))
 	
 	def neuron_init(self, x):
 		self.batch_size = x.size(0)
@@ -305,8 +305,10 @@ class VGG_SNN_STDB_IMAGENET(nn.Module):
 
 	def forward(self, x, mem=0, spike=0, mask=0, find_max_mem=False, max_mem_layer=0):
 		
+		# For truncated backprop, checking for starting timestep
 		if not isinstance(mem,dict):
 			self.neuron_init(x)
+		# For truncated backprop, loading the state values from previous chunk
 		else:
 			#pdb.set_trace()
 			self.mem 		= {}

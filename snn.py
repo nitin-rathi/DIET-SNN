@@ -142,7 +142,9 @@ def train(epoch):
         loss = F.cross_entropy(output,target)
         #make_dot(loss).view()
         loss.backward()
-        optimizer.step()        
+        optimizer.step()       
+        #pdb.set_trace()
+        #optimizer.load_state_dict(optimizer.state_dict())
         pred = output.max(1,keepdim=True)[1]
         correct = pred.eq(target.data.view_as(pred)).cpu().sum()
         
@@ -156,11 +158,10 @@ def train(epoch):
         if (batch_idx+1) % train_acc_batches == 0:
             temp1 = []
             temp2 = []
-            
             for key, value in sorted(model.module.threshold.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
-                temp1 = temp1+[round(value.item(),2)]
+                temp1 = temp1+[round(value.item(),5)]
             for key, value in sorted(model.module.leak.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
-                temp2 = temp2+[round(value.item(),2)]
+                temp2 = temp2+[round(value.item(),5)]
             f.write('\n\nEpoch: {}, batch: {}, train_loss: {:.4f}, train_acc: {:.4f}, threshold: {}, leak: {}, timesteps: {}, time: {}'
                     .format(epoch,
                         batch_idx+1,
@@ -173,6 +174,25 @@ def train(epoch):
                         )
                     )
             local_time = datetime.datetime.now()
+
+            # state = {
+            #         'accuracy'              : max_accuracy,
+            #         'epoch'                 : epoch,
+            #         'state_dict'            : model.state_dict(),
+            #         'optimizer'             : optimizer.state_dict(),
+            #         'thresholds'            : temp1,
+            #         'timesteps'             : timesteps,
+            #         'leak'                  : temp2,
+            #         'activation'            : activation
+            #     }
+            # try:
+            #     os.mkdir('./trained_models/snn/')
+            # except OSError:
+            #     pass 
+            # filename = './trained_models/snn/'+identifier+'.pth'
+            # if not args.dont_save:
+            #     torch.save(state,filename)
+
     f.write('\nEpoch: {}, lr: {:.1e}, train_loss: {:.4f}, train_acc: {:.4f}'
                     .format(epoch,
                         learning_rate,
@@ -254,7 +274,8 @@ def test(epoch):
             except OSError:
                 pass 
             filename = './trained_models/snn/'+identifier+'.pth'
-            torch.save(state,filename)    
+            if not args.dont_save:
+                torch.save(state,filename)    
         
             #if is_best:
             #    shutil.copyfile(filename, 'best_'+filename)
@@ -301,6 +322,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_acc_batches',      default=1000,               type=int,       help='print training progress after this many batches')
     parser.add_argument('--devices',                default='0',                type=str,       help='list of gpu device(s)')
     parser.add_argument('--resume',                 default='',                 type=str,       help='resume training from this state')
+    parser.add_argument('--dont_save',              action='store_true',                        help='don\'t save training model during testing')
 
     args = parser.parse_args()
     
@@ -384,7 +406,14 @@ if __name__ == '__main__':
     if torch.cuda.is_available() and args.gpu:
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
-    normalize       = transforms.Normalize(mean = [0.5, 0.5, 0.5], std = [0.5, 0.5, 0.5])
+    #normalize       = transforms.Normalize(mean = [0.5, 0.5, 0.5], std = [0.5, 0.5, 0.5])
+    
+    if dataset == 'CIFAR10':
+        normalize   = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+    elif dataset == 'CIFAR100':
+        normalize   = transforms.Normalize((0.5071,0.4867,0.4408), (0.2675,0.2565,0.2761))
+    elif dataset == 'IMAGENET':
+        normalize   = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
     
     if dataset in ['CIFAR10', 'CIFAR100']:
         transform_train = transforms.Compose([
@@ -487,25 +516,28 @@ if __name__ == '__main__':
     elif pretrained_snn:
                 
         state = torch.load(pretrained_snn, map_location='cpu')
-        cur_dict = model.state_dict()     
-        for key in state['state_dict'].keys():
-            if key in cur_dict:
-                if (state['state_dict'][key].shape == cur_dict[key].shape):
-                    cur_dict[key] = nn.Parameter(state['state_dict'][key].data)
-                    f.write('\n Loaded {} from {}'.format(key, pretrained_snn))
-                else:
-                    f.write('\n Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
-            else:
-                f.write('\n Loaded weight {} not present in current model'.format(state['state_dict'][key]))
-        model.load_state_dict(cur_dict)
+        missing_keys, unexpected_keys = model.load_state_dict(state['state_dict'], strict=False)
+        f.write('\n Missing keys : {}, Unexpected Keys: {}'.format(missing_keys, unexpected_keys))        
+        f.write('\n Info: Accuracy of loaded ANN model: {}'.format(state['accuracy']))
+        # cur_dict = model.state_dict()     
+        # for key in state['state_dict'].keys():
+        #     if key in cur_dict:
+        #         if (state['state_dict'][key].shape == cur_dict[key].shape):
+        #             cur_dict[key] = nn.Parameter(state['state_dict'][key].data)
+        #             f.write('\n Loaded {} from {}'.format(key, pretrained_snn))
+        #         else:
+        #             f.write('\n Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
+        #     else:
+        #         f.write('\n Loaded weight {} not present in current model'.format(state['state_dict'][key]))
+        # model.load_state_dict(cur_dict)
 
-        if 'thresholds' in state.keys():
-            if state['timesteps']!=timesteps or state['leak']!=leak:
-                f.write('\n Timesteps/Leak mismatch between loaded SNN and current simulation timesteps/leak, current timesteps/leak {}/{}, loaded timesteps/leak {}/{}'.format(timesteps, leak, state['timesteps'], state['leak']))
-            thresholds = state['thresholds']
-            model.module.threshold_update(scaling_factor = 1.0, thresholds=thresholds[:])
-        else:
-            f.write('\n Loaded SNN model does not have thresholds')
+        # if 'thresholds' in state.keys():
+        #     if state['timesteps']!=timesteps or state['leak']!=leak:
+        #         f.write('\n Timesteps/Leak mismatch between loaded SNN and current simulation timesteps/leak, current timesteps/leak {}/{}, loaded timesteps/leak {}/{}'.format(timesteps, leak, state['timesteps'], state['leak']))
+        #     thresholds = state['thresholds']
+        #     model.module.threshold_update(scaling_factor = 1.0, thresholds=thresholds[:])
+        # else:
+        #     f.write('\n Loaded SNN model does not have thresholds')
 
     f.write('\n {}'.format(model))
     
@@ -533,31 +565,35 @@ if __name__ == '__main__':
     if resume:
         f.write('\n Resuming from checkpoint {}'.format(resume))
         state = torch.load(resume, map_location='cpu')
-        cur_dict = model.state_dict()     
-        for key in state['state_dict'].keys():
-            if key in cur_dict:
-                if (state['state_dict'][key].shape == cur_dict[key].shape):
-                    cur_dict[key] = nn.Parameter(state['state_dict'][key].data)
-                    f.write('\n Success: Loaded {} from {}'.format(key, pretrained_ann))
-                else:
-                    f.write('\n Error: Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
-            else:
-                f.write('\n Error: Loaded weight {} not present in current model'.format(key))
-        model.load_state_dict(cur_dict)
-
-        thresholds = state['thresholds']
-        leak       = state['leak']
-        model.module.threshold_update(scaling_factor = 1.0, thresholds=thresholds[:])
-        model.module.network_update(timesteps=timesteps, leak=leak[:])
+        missing_keys, unexpected_keys = model.load_state_dict(state['state_dict'], strict=False)
+        f.write('\n Missing keys : {}, Unexpected Keys: {}'.format(missing_keys, unexpected_keys))        
+        f.write('\n Info: Accuracy of loaded ANN model: {}'.format(state['accuracy']))
         
-        start_epoch     = state['epoch']
+        # cur_dict = model.state_dict()     
+        # for key in state['state_dict'].keys():
+        #     if key in cur_dict:
+        #         if (state['state_dict'][key].shape == cur_dict[key].shape):
+        #             cur_dict[key] = nn.Parameter(state['state_dict'][key].data)
+        #             f.write('\n Success: Loaded {} from {}'.format(key, pretrained_ann))
+        #         else:
+        #             f.write('\n Error: Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
+        #     else:
+        #         f.write('\n Error: Loaded weight {} not present in current model'.format(key))
+        # model.load_state_dict(cur_dict)
+        #pdb.set_trace()
+        #thresholds = state['thresholds']
+        #leak       = state['leak']
+        #model.module.threshold_update(scaling_factor = 1.0, thresholds=thresholds[:])
+        #model.module.network_update(timesteps=timesteps, leak=leak[:])
+        
+        epoch           = state['epoch']
+        start_epoch     = epoch + 1
         max_accuracy    = state['accuracy']
         optimizer.load_state_dict(state['optimizer'])
         for param_group in optimizer.param_groups:
             learning_rate =  param_group['lr']
 
-        f.write('\n Loaded from resume epoch: {}, accuracy: {:.4f} lr: {:.1e}'.format(start_epoch, max_accuracy, learning_rate))
-
+        f.write('\n Loaded from resume epoch: {}, accuracy: {:.4f} lr: {:.1e}'.format(epoch, max_accuracy, learning_rate))
 
     for epoch in range(start_epoch, epochs):
         start_time = datetime.datetime.now()

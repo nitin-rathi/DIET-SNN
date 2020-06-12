@@ -103,8 +103,8 @@ def find_threshold(batch_size=512, timesteps=2500, architecture='VGG16'):
         for i in range(1,5):
             layer = model.module.layers[i]
             for index in range(len(layer)):
-                for l in range(len(layer[index].residual)):
-                    if isinstance(layer[index].residual[l],nn.Conv2d):
+                for l in range(len(layer[index].delay_path)):
+                    if isinstance(layer[index].delay_path[l],nn.Conv2d):
                         pos = pos +1
 
         for c in model.module.classifier.named_children():
@@ -124,10 +124,10 @@ def train(epoch):
     losses = AverageMeter('Loss')
     top1   = AverageMeter('Acc@1')
 
-    # if epoch in lr_interval:
-    #     for param_group in optimizer.param_groups:
-    #         param_group['lr'] = param_group['lr'] / lr_reduce
-    #         learning_rate = param_group['lr']
+    if epoch>start_epoch:
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = param_group['lr'] / lr_reduce
+            learning_rate = param_group['lr']
     
     #f.write('Epoch: {} Learning Rate: {:.2e}'.format(epoch,learning_rate_use))
     
@@ -135,16 +135,18 @@ def train(epoch):
     #total_correct = 0
     model.train()
     local_time = datetime.datetime.now()   
-    time_chunks = timesteps
-    model.module.network_update(timesteps=time_chunks, leak=leak)
+    #time_chunks = timesteps
+    #model.module.network_update(timesteps=time_chunks, leak=leak)
     #current_time = start_time
     #model.module.network_init(update_interval)
     optimizer.zero_grad()
     
     for batch_idx, (data, target) in enumerate(train_loader):
         
-        if batch_idx < start_batch:
-            continue
+        if epoch == start_epoch and start_batch > 300000:
+            break
+        #if batch_idx < start_batch:
+        #    continue
         if torch.cuda.is_available() and args.gpu:
             data, target = data.cuda(), target.cuda()
         
@@ -158,10 +160,10 @@ def train(epoch):
         mask = 0
         spike = 0
         #pdb.set_trace()
-        while t<(timesteps-time_chunks):
-            with torch.no_grad():
-                output, mem, spike, mask = model(data, mem=mem, spike=spike, mask=mask)
-                t = t+time_chunks
+        # while t<(timesteps-time_chunks):
+        #     with torch.no_grad():
+        #         output, mem, spike, mask = model(data, mem=mem, spike=spike, mask=mask)
+        #         t = t+time_chunks
         
         output, mem, spike, mask = model(data, mem=mem, spike=spike, mask=mask)
         #pdb.set_trace()
@@ -272,10 +274,11 @@ def test(epoch):
             
             if test_acc_every_batch:
                 
-                f.write('\n Images {}/{} Accuracy: {}/{}({:.4f})'
+                f.write('\n Images {}/{} Loss: {:.4f} Accuracy: {}/{}({:.4f})'
                     .format(
                     test_loader.batch_size*(batch_idx+1),
                     len(test_loader.dataset),
+                    losses.avg,
                     correct.item(),
                     data.size(0),
                     top1.avg
@@ -313,7 +316,8 @@ def test(epoch):
             except OSError:
                 pass 
             filename = './trained_models/snn/'+identifier+'_test.pth'
-            torch.save(state,filename)    
+            if not args.dont_save:
+                torch.save(state,filename)    
         
             #if is_best:
             #    shutil.copyfile(filename, 'best_'+filename)
@@ -359,6 +363,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_acc_batches',      default=1000,               type=int,       help='print training progress after this many batches')
     parser.add_argument('--devices',                default='0',                type=str,       help='list of gpu device(s)')
     parser.add_argument('--resume',                 default='',                 type=str,       help='resume training from this state')
+    parser.add_argument('--dont_save',              action='store_true',                        help='don\'t save training model during testing')
 
     args = parser.parse_args()
 
@@ -441,7 +446,12 @@ if __name__ == '__main__':
     if torch.cuda.is_available() and args.gpu:
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
-    normalize       = transforms.Normalize(mean = [0.5, 0.5, 0.5], std = [0.5, 0.5, 0.5])
+    if dataset == 'CIFAR10':
+        normalize   = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+    elif dataset == 'CIFAR100':
+        normalize   = transforms.Normalize((0.5071,0.4867,0.4408), (0.2675,0.2565,0.2761))
+    elif dataset == 'IMAGENET':
+        normalize   = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
     
     if dataset in ['CIFAR10', 'CIFAR100']:
         transform_train = transforms.Compose([
@@ -495,14 +505,14 @@ if __name__ == '__main__':
         model = VGG_SNN_STDB_IMAGENET(vgg_name = architecture, activation = activation, labels=labels, timesteps=timesteps, leak=leak, default_threshold=default_threshold, alpha=alpha, beta=beta, dropout=dropout, kernel_size=kernel_size, dataset=dataset)
     
     elif architecture[0:3].lower() == 'res':
-        model = RESNET_SNN_STDB(resnet_name = architecture, activation = activation, labels=labels, timesteps=timesteps,leak=leak, default_threshold=default_threshold, alpha=alpha, beta=beta, dropout=dropout, dataset=dataset)
+        model = RESNET_SNN_STDB_IMAGENET(resnet_name = architecture, activation = activation, labels=labels, timesteps=timesteps,leak=leak, default_threshold=default_threshold, alpha=alpha, beta=beta, dropout=dropout, dataset=dataset)
 
     # if freeze_conv:
     #     for param in model.features.parameters():
     #         param.requires_grad = False
     
     #Please comment this line if you find key mismatch error and uncomment the DataParallel after the if block
-    model = nn.DataParallel(model) 
+    model = nn.DataParallel(model)   
     #model = nn.parallel.DistributedDataParallel(model)
     #pdb.set_trace()
 
@@ -510,25 +520,29 @@ if __name__ == '__main__':
       
         state = torch.load(pretrained_ann, map_location='cpu')
         
-        cur_dict = model.state_dict()
-        cur_dict['module.features.0.weight']    = nn.Parameter(state['state_dict']['features.module.0.weight'].data)
-        cur_dict['module.features.3.weight']    = nn.Parameter(state['state_dict']['features.module.3.weight'].data)
-        cur_dict['module.features.6.weight']    = nn.Parameter(state['state_dict']['features.module.6.weight'].data)
-        cur_dict['module.features.9.weight']    = nn.Parameter(state['state_dict']['features.module.9.weight'].data)
-        cur_dict['module.features.12.weight']   = nn.Parameter(state['state_dict']['features.module.12.weight'].data)
-        cur_dict['module.features.15.weight']   = nn.Parameter(state['state_dict']['features.module.15.weight'].data)
-        cur_dict['module.features.18.weight']   = nn.Parameter(state['state_dict']['features.module.18.weight'].data)
-        cur_dict['module.features.21.weight']   = nn.Parameter(state['state_dict']['features.module.21.weight'].data)
-        cur_dict['module.features.24.weight']   = nn.Parameter(state['state_dict']['features.module.24.weight'].data)
-        cur_dict['module.features.27.weight']   = nn.Parameter(state['state_dict']['features.module.27.weight'].data)
-        cur_dict['module.features.30.weight']   = nn.Parameter(state['state_dict']['features.module.30.weight'].data)
-        cur_dict['module.features.33.weight']   = nn.Parameter(state['state_dict']['features.module.33.weight'].data)
-        cur_dict['module.features.36.weight']   = nn.Parameter(state['state_dict']['features.module.36.weight'].data)
-        cur_dict['module.classifier.0.weight']  = nn.Parameter(state['state_dict']['classifier.0.weight'].data)
-        cur_dict['module.classifier.3.weight']  = nn.Parameter(state['state_dict']['classifier.3.weight'].data)
-        cur_dict['module.classifier.6.weight']  = nn.Parameter(state['state_dict']['classifier.6.weight'].data)
-
-        missing_keys, unexpected_keys = model.load_state_dict(cur_dict, strict=False)
+        if architecture.lower().startswith('res'):
+            missing_keys, unexpected_keys = model.load_state_dict(state['state_dict'], strict=False)
+            #pdb.set_trace()
+        else:
+            cur_dict = model.state_dict()
+            cur_dict['module.features.0.weight']    = nn.Parameter(state['state_dict']['features.module.0.weight'].data)
+            cur_dict['module.features.3.weight']    = nn.Parameter(state['state_dict']['features.module.3.weight'].data)
+            cur_dict['module.features.6.weight']    = nn.Parameter(state['state_dict']['features.module.6.weight'].data)
+            cur_dict['module.features.9.weight']    = nn.Parameter(state['state_dict']['features.module.9.weight'].data)
+            cur_dict['module.features.12.weight']   = nn.Parameter(state['state_dict']['features.module.12.weight'].data)
+            cur_dict['module.features.15.weight']   = nn.Parameter(state['state_dict']['features.module.15.weight'].data)
+            cur_dict['module.features.18.weight']   = nn.Parameter(state['state_dict']['features.module.18.weight'].data)
+            cur_dict['module.features.21.weight']   = nn.Parameter(state['state_dict']['features.module.21.weight'].data)
+            cur_dict['module.features.24.weight']   = nn.Parameter(state['state_dict']['features.module.24.weight'].data)
+            cur_dict['module.features.27.weight']   = nn.Parameter(state['state_dict']['features.module.27.weight'].data)
+            cur_dict['module.features.30.weight']   = nn.Parameter(state['state_dict']['features.module.30.weight'].data)
+            cur_dict['module.features.33.weight']   = nn.Parameter(state['state_dict']['features.module.33.weight'].data)
+            cur_dict['module.features.36.weight']   = nn.Parameter(state['state_dict']['features.module.36.weight'].data)
+            cur_dict['module.classifier.0.weight']  = nn.Parameter(state['state_dict']['classifier.0.weight'].data)
+            cur_dict['module.classifier.3.weight']  = nn.Parameter(state['state_dict']['classifier.3.weight'].data)
+            cur_dict['module.classifier.6.weight']  = nn.Parameter(state['state_dict']['classifier.6.weight'].data)
+            missing_keys, unexpected_keys = model.load_state_dict(cur_dict, strict=False)
+        
         f.write('\n Missing keys: {}'.format(missing_keys))
         f.write('\n Unexpected keys: {}'.format(unexpected_keys))
         f.write('\n Info: Top-1 (Top-5) accuracy of loaded ANN model: {}({})'.format(state['acc1'], state['acc5']))
@@ -544,6 +558,7 @@ if __name__ == '__main__':
             thresholds = state['thresholds']
             f.write('\n Info: Thresholds loaded from trained ANN: {}'.format(thresholds))
             model.module.threshold_update(scaling_factor = scaling_factor, thresholds=thresholds[:])
+        # Find the threhsolds and save it to the ANN file for further use
         else:
             thresholds = find_threshold(batch_size=32, timesteps=500, architecture=architecture)
             model.module.threshold_update(scaling_factor = scaling_factor, thresholds=thresholds[:])
@@ -558,102 +573,111 @@ if __name__ == '__main__':
     elif pretrained_snn:
                 
         state = torch.load(pretrained_snn, map_location='cpu')
+        missing_keys, unexpected_keys = model.load_state_dict(state['state_dict'], strict=False)
 
-        cur_dict = model.state_dict()
-        cur_dict['module.features.0.weight']    = nn.Parameter(state['state_dict']['module.features.0.weight'].data)
-        cur_dict['module.features.3.weight']    = nn.Parameter(state['state_dict']['module.features.3.weight'].data)
-        cur_dict['module.features.6.weight']    = nn.Parameter(state['state_dict']['module.features.6.weight'].data)
-        cur_dict['module.features.9.weight']    = nn.Parameter(state['state_dict']['module.features.9.weight'].data)
-        cur_dict['module.features.12.weight']   = nn.Parameter(state['state_dict']['module.features.12.weight'].data)
-        cur_dict['module.features.15.weight']   = nn.Parameter(state['state_dict']['module.features.15.weight'].data)
-        cur_dict['module.features.18.weight']   = nn.Parameter(state['state_dict']['module.features.18.weight'].data)
-        cur_dict['module.features.21.weight']   = nn.Parameter(state['state_dict']['module.features.21.weight'].data)
-        cur_dict['module.features.24.weight']   = nn.Parameter(state['state_dict']['module.features.24.weight'].data)
-        cur_dict['module.features.27.weight']   = nn.Parameter(state['state_dict']['module.features.27.weight'].data)
-        cur_dict['module.features.30.weight']   = nn.Parameter(state['state_dict']['module.features.30.weight'].data)
-        cur_dict['module.features.33.weight']   = nn.Parameter(state['state_dict']['module.features.33.weight'].data)
-        cur_dict['module.features.36.weight']   = nn.Parameter(state['state_dict']['module.features.36.weight'].data)
-        cur_dict['module.classifier.0.weight']  = nn.Parameter(state['state_dict']['module.classifier.0.weight'].data)
-        cur_dict['module.classifier.3.weight']  = nn.Parameter(state['state_dict']['module.classifier.3.weight'].data)
-        cur_dict['module.classifier.6.weight']  = nn.Parameter(state['state_dict']['module.classifier.6.weight'].data)
+        # cur_dict = model.state_dict()
+        # cur_dict['module.features.0.weight']    = nn.Parameter(state['state_dict']['module.features.0.weight'].data)
+        # cur_dict['module.features.3.weight']    = nn.Parameter(state['state_dict']['module.features.3.weight'].data)
+        # cur_dict['module.features.6.weight']    = nn.Parameter(state['state_dict']['module.features.6.weight'].data)
+        # cur_dict['module.features.9.weight']    = nn.Parameter(state['state_dict']['module.features.9.weight'].data)
+        # cur_dict['module.features.12.weight']   = nn.Parameter(state['state_dict']['module.features.12.weight'].data)
+        # cur_dict['module.features.15.weight']   = nn.Parameter(state['state_dict']['module.features.15.weight'].data)
+        # cur_dict['module.features.18.weight']   = nn.Parameter(state['state_dict']['module.features.18.weight'].data)
+        # cur_dict['module.features.21.weight']   = nn.Parameter(state['state_dict']['module.features.21.weight'].data)
+        # cur_dict['module.features.24.weight']   = nn.Parameter(state['state_dict']['module.features.24.weight'].data)
+        # cur_dict['module.features.27.weight']   = nn.Parameter(state['state_dict']['module.features.27.weight'].data)
+        # cur_dict['module.features.30.weight']   = nn.Parameter(state['state_dict']['module.features.30.weight'].data)
+        # cur_dict['module.features.33.weight']   = nn.Parameter(state['state_dict']['module.features.33.weight'].data)
+        # cur_dict['module.features.36.weight']   = nn.Parameter(state['state_dict']['module.features.36.weight'].data)
+        # cur_dict['module.classifier.0.weight']  = nn.Parameter(state['state_dict']['module.classifier.0.weight'].data)
+        # cur_dict['module.classifier.3.weight']  = nn.Parameter(state['state_dict']['module.classifier.3.weight'].data)
+        # cur_dict['module.classifier.6.weight']  = nn.Parameter(state['state_dict']['module.classifier.6.weight'].data)
 
-        missing_keys, unexpected_keys = model.load_state_dict(cur_dict, strict=False)
+        # missing_keys, unexpected_keys = model.load_state_dict(cur_dict, strict=False)
         f.write('\n Missing keys: {}, Unexpected keys: {}'.format(missing_keys, unexpected_keys))
-        thresholds = state['thresholds']
-        leak       = state['leak']
-        model.module.threshold_update(scaling_factor = 1.0, thresholds=thresholds[:])
-        model.module.network_update(timesteps=timesteps, leak=leak)
+        # thresholds = state['thresholds']
+        # leak       = state['leak']
+        # model.module.threshold_update(scaling_factor = 1.0, thresholds=thresholds[:])
+        # model.module.network_update(timesteps=timesteps, leak=leak)
     
     f.write('\n {}'.format(model))
         
     if torch.cuda.is_available() and args.gpu:
         model.cuda()
-    # if optimizer == 'Adam':
-    #     optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=amsgrad, weight_decay=weight_decay)
-    # elif optimizer == 'SGD':
-    #     optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, weight_decay=weight_decay, nesterov=False)
+    
+    if optimizer == 'Adam':
+        optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=amsgrad, weight_decay=weight_decay)
+    elif optimizer == 'SGD':
+        optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, weight_decay=weight_decay, nesterov=False)
+
+    # find_threshold() alters the timesteps and leak, restoring it here
+    model.module.network_update(timesteps=timesteps, leak=leak)
+        
+    f.write('\n {}'.format(optimizer))
 
     if resume:
         f.write('\n Resuming from checkpoint {}'.format(resume))
         state = torch.load(resume, map_location='cpu')
+        missing_keys, unexpected_keys = model.load_state_dict(state['state_dict'], strict=False)
         
-        cur_dict = model.state_dict()
-        cur_dict['module.features.0.weight']    = nn.Parameter(state['state_dict']['module.features.0.weight'].data)
-        cur_dict['module.features.3.weight']    = nn.Parameter(state['state_dict']['module.features.3.weight'].data)
-        cur_dict['module.features.6.weight']    = nn.Parameter(state['state_dict']['module.features.6.weight'].data)
-        cur_dict['module.features.9.weight']    = nn.Parameter(state['state_dict']['module.features.9.weight'].data)
-        cur_dict['module.features.12.weight']   = nn.Parameter(state['state_dict']['module.features.12.weight'].data)
-        cur_dict['module.features.15.weight']   = nn.Parameter(state['state_dict']['module.features.15.weight'].data)
-        cur_dict['module.features.18.weight']   = nn.Parameter(state['state_dict']['module.features.18.weight'].data)
-        cur_dict['module.features.21.weight']   = nn.Parameter(state['state_dict']['module.features.21.weight'].data)
-        cur_dict['module.features.24.weight']   = nn.Parameter(state['state_dict']['module.features.24.weight'].data)
-        cur_dict['module.features.27.weight']   = nn.Parameter(state['state_dict']['module.features.27.weight'].data)
-        cur_dict['module.features.30.weight']   = nn.Parameter(state['state_dict']['module.features.30.weight'].data)
-        cur_dict['module.features.33.weight']   = nn.Parameter(state['state_dict']['module.features.33.weight'].data)
-        cur_dict['module.features.36.weight']   = nn.Parameter(state['state_dict']['module.features.36.weight'].data)
-        cur_dict['module.classifier.0.weight']  = nn.Parameter(state['state_dict']['module.classifier.0.weight'].data)
-        cur_dict['module.classifier.3.weight']  = nn.Parameter(state['state_dict']['module.classifier.3.weight'].data)
-        cur_dict['module.classifier.6.weight']  = nn.Parameter(state['state_dict']['module.classifier.6.weight'].data)
+        # cur_dict = model.state_dict()
+        # cur_dict['module.features.0.weight']    = nn.Parameter(state['state_dict']['module.features.0.weight'].data)
+        # cur_dict['module.features.3.weight']    = nn.Parameter(state['state_dict']['module.features.3.weight'].data)
+        # cur_dict['module.features.6.weight']    = nn.Parameter(state['state_dict']['module.features.6.weight'].data)
+        # cur_dict['module.features.9.weight']    = nn.Parameter(state['state_dict']['module.features.9.weight'].data)
+        # cur_dict['module.features.12.weight']   = nn.Parameter(state['state_dict']['module.features.12.weight'].data)
+        # cur_dict['module.features.15.weight']   = nn.Parameter(state['state_dict']['module.features.15.weight'].data)
+        # cur_dict['module.features.18.weight']   = nn.Parameter(state['state_dict']['module.features.18.weight'].data)
+        # cur_dict['module.features.21.weight']   = nn.Parameter(state['state_dict']['module.features.21.weight'].data)
+        # cur_dict['module.features.24.weight']   = nn.Parameter(state['state_dict']['module.features.24.weight'].data)
+        # cur_dict['module.features.27.weight']   = nn.Parameter(state['state_dict']['module.features.27.weight'].data)
+        # cur_dict['module.features.30.weight']   = nn.Parameter(state['state_dict']['module.features.30.weight'].data)
+        # cur_dict['module.features.33.weight']   = nn.Parameter(state['state_dict']['module.features.33.weight'].data)
+        # cur_dict['module.features.36.weight']   = nn.Parameter(state['state_dict']['module.features.36.weight'].data)
+        # cur_dict['module.classifier.0.weight']  = nn.Parameter(state['state_dict']['module.classifier.0.weight'].data)
+        # cur_dict['module.classifier.3.weight']  = nn.Parameter(state['state_dict']['module.classifier.3.weight'].data)
+        # cur_dict['module.classifier.6.weight']  = nn.Parameter(state['state_dict']['module.classifier.6.weight'].data)
         
-        missing_keys, unexpected_keys = model.load_state_dict(cur_dict, strict=False)
+        # missing_keys, unexpected_keys = model.load_state_dict(cur_dict, strict=False)
         f.write('\n Missing keys: {}, Unexpected keys: {}'.format(missing_keys, unexpected_keys))
-        thresholds = state['thresholds']
-        leak       = state['leak']
-        model.module.threshold_update(scaling_factor = 1.0, thresholds=thresholds[:])
-        model.module.network_update(timesteps=timesteps, leak=leak)
+        # thresholds = state['thresholds']
+        # leak       = state['leak']
+        # model.module.threshold_update(scaling_factor = 1.0, thresholds=thresholds[:])
+        # model.module.network_update(timesteps=timesteps, leak=leak)
         
-        if optimizer == 'Adam':
-            optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=amsgrad, weight_decay=weight_decay)
-        elif optimizer == 'SGD':
-            optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, weight_decay=weight_decay, nesterov=False)
+        # if optimizer == 'Adam':
+        #     optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=amsgrad, weight_decay=weight_decay)
+        # elif optimizer == 'SGD':
+        #     optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, weight_decay=weight_decay, nesterov=False)
         
         start_epoch     = state['epoch']
-        start_batch     = state['batch']
+        batch           = state['batch']
+        start_batch     = batch+1
         accuracy        = state['accuracy']
         #pdb.set_trace()
         optimizer.load_state_dict(state['optimizer'])
         for param_group in optimizer.param_groups:
-            #learning_rate =  param_group['lr']
-            param_group['lr'] = learning_rate
-        start_epoch = start_epoch + 1
-        start_batch = 0
-        f.write('\n Loaded from resume epoch: {}, batch: {} accuracy: {:.4f} lr: {:.1e}'.format(start_epoch, start_batch, accuracy, learning_rate))
+            learning_rate =  param_group['lr']
+            #param_group['lr'] = learning_rate
+        #start_epoch = start_epoch + 1
+        #start_batch = 0
+        f.write('\n Loaded from resume epoch: {}, batch: {} accuracy: {:.4f} lr: {:.1e}'.format(start_epoch, batch, accuracy, learning_rate))
     
-    else:
-        f.write('\n {}'.format(model))
+    # else:
+    #     f.write('\n {}'.format(model))
         
-        if torch.cuda.is_available() and args.gpu:
-            model.cuda()
+    #     if torch.cuda.is_available() and args.gpu:
+    #         model.cuda()
     
-        if optimizer == 'Adam':
-            optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=amsgrad, weight_decay=weight_decay)
-        elif optimizer == 'SGD':
-            optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, weight_decay=weight_decay, nesterov=False)
+    #     if optimizer == 'Adam':
+    #         optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=amsgrad, weight_decay=weight_decay)
+    #     elif optimizer == 'SGD':
+    #         optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, weight_decay=weight_decay, nesterov=False)
         
-        # find_threshold() alters the timesteps and leak, restoring it here
-        model.module.network_update(timesteps=timesteps, leak=leak)
+    #     # find_threshold() alters the timesteps and leak, restoring it here
+    #     model.module.network_update(timesteps=timesteps, leak=leak)
         
-        f.write('\n {}'.format(optimizer))
+    #     f.write('\n {}'.format(optimizer))
 
     for epoch in range(start_epoch, epochs):
         start_time = datetime.datetime.now()
