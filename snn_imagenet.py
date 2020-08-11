@@ -263,7 +263,10 @@ def test(epoch):
             if torch.cuda.is_available() and args.gpu:
                 data, target = data.cuda(), target.cuda()
             
-            output,_,_,_    = model(data) 
+            mem = 0
+            mask = 0
+            spike = 0
+            output,_,_,_    = model(data, mem=mem, spike=spike, mask=mask) 
             loss            = F.cross_entropy(output,target)
             pred            = output.max(1,keepdim=True)[1]
             correct         = pred.eq(target.data.view_as(pred)).cpu().sum()
