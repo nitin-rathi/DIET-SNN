@@ -219,6 +219,10 @@ if __name__ == '__main__':
         labels      = 10
     elif dataset == 'MNIST':
         labels = 10
+    elif dataset == 'IMAGENET':
+        normalize   = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        labels = 1000
+
     
     if dataset == 'CIFAR10' or dataset == 'CIFAR100':
         transform_train = transforms.Compose([
@@ -241,6 +245,26 @@ if __name__ == '__main__':
         train_dataset   = datasets.MNIST(root='~/Datasets/mnist/', train=True, download=True, transform=transforms.ToTensor()
             )
         test_dataset    = datasets.MNIST(root='~/Datasets/mnist/', train=False, download=True, transform=transforms.ToTensor())
+    elif dataset == 'IMAGENET':
+        traindir    = os.path.join('/local/a/imagenet/imagenet2012/', 'train')
+        valdir      = os.path.join('/local/a/imagenet/imagenet2012/', 'val')
+        train_dataset    = datasets.ImageFolder(
+                            traindir,
+                            transforms.Compose([
+                                transforms.RandomResizedCrop(224),
+                                transforms.RandomHorizontalFlip(),
+                                transforms.ToTensor(),
+                                normalize,
+                            ]))
+        test_dataset     = datasets.ImageFolder(
+                            valdir,
+                            transforms.Compose([
+                                transforms.Resize(256),
+                                transforms.CenterCrop(224),
+                                transforms.ToTensor(),
+                                normalize,
+                            ]))
+
     
     train_loader    = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)
     
