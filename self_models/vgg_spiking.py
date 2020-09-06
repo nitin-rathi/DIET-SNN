@@ -12,6 +12,7 @@ from matplotlib import pyplot as plt
 import copy
 
 cfg = {
+	'VGG4' : [64, 'A', 128, 'A'],
     'VGG5' : [64, 'A', 128, 128, 'A'],
     'VGG9':  [64, 'A', 128, 256, 'A', 256, 512, 'A', 512, 'A', 512],
     'VGG11': [64, 'A', 128, 256, 'A', 512, 512, 'A', 512, 'A', 512, 512],
@@ -191,6 +192,15 @@ class VGG_SNN_STDB(nn.Module):
 			layers += [nn.ReLU(inplace=True)]
 			layers += [nn.Dropout(self.dropout)]
 			layers += [nn.Linear(4096, self.labels, bias=False)]
+
+		elif self.vgg_name == 'VGG4' and self.dataset== 'MNIST':
+			layers += [nn.Linear(128*7*7, 1024, bias=False)]
+			layers += [nn.ReLU(inplace=True)]
+			layers += [nn.Dropout(self.dropout)]
+			#layers += [nn.Linear(4096, 4096, bias=False)]
+			#layers += [nn.ReLU(inplace=True)]
+			#layers += [nn.Dropout(self.dropout)]
+			layers += [nn.Linear(1024, self.labels, bias=False)]
 		
 		elif self.vgg_name != 'VGG5' and self.dataset != 'MNIST':
 			layers += [nn.Linear(512*2*2, 4096, bias=False)]

@@ -38,6 +38,40 @@ class AverageMeter(object):
         fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
         return fmtstr.format(**self.__dict__)
 
+def compute_mac(model, dataset):
+
+    if dataset.lower().startswith('cifar'):
+        h_in, w_in = 32, 32
+    elif dataset.lower().startswith('image'):
+        h_in, w_in = 224, 224
+    elif dataset.lower().startswith('mnist'):
+        h_in, w_in = 28, 28
+
+    macs = []
+    for name, l in model.named_modules():
+        if isinstance(l, nn.Conv2d):
+            c_in    = l.in_channels
+            k       = l.kernel_size[0]
+            h_out   = int((h_in-k+2*l.padding[0])/(l.stride[0])) + 1
+            w_out   = int((w_in-k+2*l.padding[0])/(l.stride[0])) + 1
+            c_out   = l.out_channels
+            mac     = k*k*c_in*h_out*w_out*c_out
+            if mac == 0:
+                pdb.set_trace()
+            macs.append(mac)
+            h_in    = h_out
+            w_in    = w_out
+            print('{}, Mac:{}'.format(name, mac))
+        if isinstance(l, nn.Linear):
+            mac     = l.in_features * l.out_features
+            macs.append(mac)
+            print('{}, Mac:{}'.format(name, mac))
+        if isinstance(l, nn.AvgPool2d):
+            h_in    = h_in//l.kernel_size
+            w_in    = w_in//l.kernel_size
+    print('{:e}'.format(sum(macs)))
+    exit()
+
 def train(epoch, loader):
 
     global learning_rate
@@ -123,7 +157,8 @@ def test(loader):
                 pass
             
             filename = './trained_models/ann/'+identifier+'.pth'
-            torch.save(state,filename)
+            if not args.dont_save:
+                torch.save(state,filename)
             
         f.write(' test_loss: {:.4f}, test_acc: {:.4f}, best: {:.4f}, time: {}'.  format(
             losses.avg, 
@@ -144,7 +179,7 @@ if __name__ == '__main__':
     parser.add_argument('-s','--seed',              default=0,                  type=int,       help='seed for random number')
     parser.add_argument('--dataset',                default='CIFAR10',          type=str,       help='dataset name', choices=['MNIST','CIFAR10','CIFAR100'])
     parser.add_argument('--batch_size',             default=64,                 type=int,       help='minibatch size')
-    parser.add_argument('-a','--architecture',      default='VGG16',            type=str,       help='network architecture', choices=['VGG5','VGG9','VGG11','VGG13','VGG16','VGG19','RESNET12','RESNET20','RESNET34'])
+    parser.add_argument('-a','--architecture',      default='VGG16',            type=str,       help='network architecture', choices=['VGG4','VGG5','VGG9','VGG11','VGG13','VGG16','VGG19','RESNET12','RESNET20','RESNET34'])
     parser.add_argument('-lr','--learning_rate',    default=1e-2,               type=float,     help='initial learning_rate')
     parser.add_argument('--pretrained_ann',         default='',                 type=str,       help='pretrained model to initialize ANN')
     parser.add_argument('--test_only',              action='store_true',                        help='perform only inference')
@@ -154,8 +189,12 @@ if __name__ == '__main__':
     parser.add_argument('--optimizer',              default='SGD',             type=str,       help='optimizer for SNN backpropagation', choices=['SGD', 'Adam'])
     parser.add_argument('--dropout',                default=0.2,                type=float,     help='dropout percentage for conv layers')
     parser.add_argument('--kernel_size',            default=3,                  type=int,       help='filter size for the conv layers')
+    parser.add_argument('--dont_save',              action='store_true',                        help='don\'t save training model during testing')
+    parser.add_argument('--devices',                default='0',                type=str,       help='list of gpu device(s)')
         
     args=parser.parse_args()
+
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.devices
 
     # Seed random number
     torch.manual_seed(args.seed)
@@ -188,7 +227,7 @@ if __name__ == '__main__':
     except OSError:
         pass 
     
-    identifier = 'ann_'+architecture.lower()+'_'+dataset.lower()+'_'+str(lr_reduce)
+    identifier = 'ann_'+architecture.lower()+'_'+dataset.lower()
     log_file+=identifier+'.log'
     
     if args.log:
@@ -313,7 +352,7 @@ if __name__ == '__main__':
     f.write('\n {}'.format(optimizer))
     
     max_accuracy = 0
-    
+    compute_mac(model, dataset)
     for epoch in range(1, epochs):    
         start_time = datetime.datetime.now()
         train(epoch, train_loader)

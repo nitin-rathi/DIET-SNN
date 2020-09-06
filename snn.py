@@ -295,7 +295,7 @@ if __name__ == '__main__':
     parser.add_argument('-s','--seed',              default=0,                  type=int,       help='seed for random number')
     parser.add_argument('--dataset',                default='CIFAR10',          type=str,       help='dataset name', choices=['MNIST','CIFAR10','CIFAR100','IMAGENET'])
     parser.add_argument('--batch_size',             default=64,                 type=int,       help='minibatch size')
-    parser.add_argument('-a','--architecture',      default='VGG16',            type=str,       help='network architecture', choices=['VGG5','VGG9','VGG11','VGG13','VGG16','VGG19','RESNET12','RESNET20','RESNET34'])
+    parser.add_argument('-a','--architecture',      default='VGG16',            type=str,       help='network architecture', choices=['VGG4','VGG5','VGG9','VGG11','VGG13','VGG16','VGG19','RESNET12','RESNET20','RESNET34'])
     parser.add_argument('-lr','--learning_rate',    default=1e-4,               type=float,     help='initial learning_rate')
     parser.add_argument('--pretrained_ann',         default='',                 type=str,       help='pretrained ANN model')
     parser.add_argument('--pretrained_snn',         default='',                 type=str,       help='pretrained SNN for inference')
