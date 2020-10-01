@@ -370,7 +370,7 @@ if __name__ == '__main__':
     for value in values:
         lr_interval.append(int(float(value)*args.epochs))
 
-    log_file = './logs/snn/'
+    log_file = './logs/ann_ablation/'
     try:
         os.mkdir(log_file)
     except OSError:
@@ -464,7 +464,7 @@ if __name__ == '__main__':
     test_loader     = DataLoader(testset, batch_size=batch_size, shuffle=False)
 
     if architecture[0:3].lower() == 'vgg':
-        model = VGG_SNN_STDB(vgg_name = architecture, activation = activation, labels=labels, timesteps=timesteps, leak=leak, default_threshold=default_threshold, alpha=alpha, beta=beta, dropout=dropout, kernel_size=kernel_size, dataset=dataset)
+        model = VGG_SNN_STDB(vgg_name = architecture, activation = activation, labels=labels, timesteps=timesteps, leak=leak, default_threshold=default_threshold, dropout=dropout, kernel_size=kernel_size, dataset=dataset)
     
     elif architecture[0:3].lower() == 'res':
         model = RESNET_SNN_STDB(resnet_name = architecture, activation = activation, labels=labels, timesteps=timesteps,leak=leak, default_threshold=default_threshold, alpha=alpha, beta=beta, dropout=dropout, dataset=dataset)
@@ -498,7 +498,7 @@ if __name__ == '__main__':
         f.write('\n Info: Accuracy of loaded ANN model: {}'.format(state['accuracy']))
 
         #If thresholds present in loaded ANN file
-        if 'thresholds' in state.keys():
+        if 'thresholds' in state.keys() and 0:
             thresholds = state['thresholds']
             f.write('\n Info: Thresholds loaded from trained ANN: {}'.format(thresholds))
             model.module.threshold_update(scaling_factor = scaling_factor, thresholds=thresholds[:])

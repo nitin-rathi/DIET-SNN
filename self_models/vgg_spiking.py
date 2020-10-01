@@ -21,27 +21,6 @@ cfg = {
     'VGG19': [64, 64, 'A', 128, 128, 'A', 256, 256, 256, 256, 'A', 512, 512, 512, 512, 'A', 512, 512, 512, 512]
 }
 
-class STDB(torch.autograd.Function):
-
-	alpha 	= ''
-	beta 	= ''
-    
-	@staticmethod
-	def forward(ctx, input, last_spike):
-        
-		ctx.save_for_backward(last_spike)
-		out = torch.zeros_like(input).cuda()
-		out[input > 0] = 1.0
-		return out
-
-	@staticmethod
-	def backward(ctx, grad_output):
-	    		
-		last_spike, = ctx.saved_tensors
-		grad_input = grad_output.clone()
-		grad = STDB.alpha * torch.exp(-1*last_spike)**STDB.beta
-		return grad*grad_input, None
-
 class LinearSpike(torch.autograd.Function):
     """
     Here we use the piecewise-linear surrogate gradient as was done
@@ -67,7 +46,7 @@ class LinearSpike(torch.autograd.Function):
 
 class VGG_SNN_STDB(nn.Module):
 
-	def __init__(self, vgg_name, activation='Linear', labels=10, timesteps=100, leak=1.0, default_threshold = 1.0, alpha=0.3, beta=0.01, dropout=0.2, kernel_size=3, dataset='CIFAR10'):
+	def __init__(self, vgg_name, activation='Linear', labels=10, timesteps=100, leak=1.0, default_threshold = 1.0, dropout=0.2, kernel_size=3, dataset='CIFAR10'):
 		super().__init__()
 		
 		self.vgg_name 		= vgg_name
@@ -77,8 +56,8 @@ class VGG_SNN_STDB(nn.Module):
 			self.act_func	= STDB.apply
 		self.labels 		= labels
 		self.timesteps 		= timesteps
-		STDB.alpha 		 	= alpha
-		STDB.beta 			= beta 
+		#STDB.alpha 		 	= alpha
+		#STDB.beta 			= beta 
 		self.dropout 		= dropout
 		self.kernel_size 	= kernel_size
 		self.dataset 		= dataset
@@ -294,6 +273,8 @@ class VGG_SNN_STDB(nn.Module):
 		
 		self.neuron_init(x)
 		max_mem=0.0
+		ann = [0]*len(self.features)
+		ann[1] = 1
 		#pdb.set_trace()
 		for t in range(self.timesteps):
 			out_prev = x
@@ -312,11 +293,17 @@ class VGG_SNN_STDB(nn.Module):
 					mem_thr 		= (self.mem[l]/getattr(self.threshold, 't'+str(l))) - 1.0
 					rst 			= getattr(self.threshold, 't'+str(l)) * (mem_thr>0).float()
 					self.mem[l] 	= getattr(self.leak, 'l'+str(l)) *self.mem[l] + self.features[l](out_prev) - rst
+					out_prev 		= self.features[l](out_prev)
 				
 				elif isinstance(self.features[l], nn.ReLU):
-					out 			= self.act_func(mem_thr, (t-1-self.spike[l]))
-					self.spike[l] 	= self.spike[l].masked_fill(out.bool(),t-1)
-					out_prev  		= out.clone()
+					#pdb.set_trace()
+					if ann[l]:
+						out_prev = self.features[l](out_prev)
+						#pdb.set_trace()
+					else:
+						out 			= self.act_func(mem_thr, (t-1-self.spike[l]))
+						self.spike[l] 	= self.spike[l].masked_fill(out.bool(),t-1)
+						out_prev  		= out.clone()
 
 				elif isinstance(self.features[l], nn.AvgPool2d):
 					out_prev 		= self.features[l](out_prev)
