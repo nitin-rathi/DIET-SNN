@@ -12,6 +12,7 @@ from matplotlib import pyplot as plt
 import pdb
 import sys
 import datetime
+import time
 import os
 from self_models import *
 
@@ -57,39 +58,34 @@ def compute_mac(model, dataset):
             c_out   = l.out_channels
             mac     = k*k*c_in*h_out*w_out*c_out
             if mac == 0:
-                pdb.set_trace()
+                print('Error: MAC is equal to zero')
             macs.append(mac)
             h_in    = h_out
             w_in    = w_out
-            print('{}, Mac:{}'.format(name, mac))
+            print('{}, MAC:{}'.format(name, mac))
         if isinstance(l, nn.Linear):
             mac     = l.in_features * l.out_features
             macs.append(mac)
-            print('{}, Mac:{}'.format(name, mac))
+            print('{}, MAC:{}'.format(name, mac))
         if isinstance(l, nn.AvgPool2d):
             h_in    = h_in//l.kernel_size
             w_in    = w_in//l.kernel_size
-    print('{:e}'.format(sum(macs)))
-    exit()
+    print('Total MACs: {:e}'.format(sum(macs)))
 
 def train(epoch, loader):
-
-    global learning_rate
-    
+      
     losses = AverageMeter('Loss')
     top1   = AverageMeter('Acc@1')
 
-    if epoch in lr_interval:
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = param_group['lr'] / lr_reduce
-            learning_rate = param_group['lr']
+    # if epoch in lr_interval:
+    #     for param_group in optimizer.param_groups:
+    #         param_group['lr'] = param_group['lr'] / lr_reduce
+    #         learning_rate = param_group['lr']
     
     #total_correct   = 0
     model.train()
     for batch_idx, (data, target) in enumerate(loader):
-        
-        start_time = datetime.datetime.now()
-
+                
         if torch.cuda.is_available() and args.gpu:
             data, target = data.cuda(), target.cuda()
                 
@@ -107,9 +103,8 @@ def train(epoch, loader):
         losses.update(loss.item(), data.size(0))
         top1.update(correct.item()/data.size(0), data.size(0))
         
-    f.write('\n Epoch: {}, lr: {:.1e}, train_loss: {:.4f}, train_acc: {:.4f}'.format(
+    print('\n Epoch: {}, train_loss: {:.4f}, train_acc: {:.4f}'.format(
             epoch,
-            learning_rate,
             losses.avg,
             top1.avg
             )
@@ -140,7 +135,7 @@ def test(loader):
             top1.update(correct.item()/data.size(0), data.size(0))
 
         if epoch>30 and top1.avg<0.15:
-            f.write('\n Quitting as the training is not progressing')
+            print('Quitting as the training is not progressing')
             exit(0)
 
         if top1.avg>max_accuracy:
@@ -160,14 +155,14 @@ def test(loader):
             if not args.dont_save:
                 torch.save(state,filename)
             
-        f.write(' test_loss: {:.4f}, test_acc: {:.4f}, best: {:.4f}, time: {}'.  format(
+        print(' test_loss: {:.4f}, test_acc: {:.4f}, best: {:.4f}, time: {}'.  format(
             losses.avg, 
             top1.avg,
             max_accuracy,
             datetime.timedelta(seconds=(datetime.datetime.now() - start_time).seconds)
             )
         )
-        # f.write('\n Time: {}'.format(
+        # print('Time: {}'.format(
         #     datetime.timedelta(seconds=(datetime.datetime.now() - current_time).seconds)
         #     )
         # )
@@ -179,13 +174,11 @@ if __name__ == '__main__':
     parser.add_argument('-s','--seed',              default=0,                  type=int,       help='seed for random number')
     parser.add_argument('--dataset',                default='CIFAR10',          type=str,       help='dataset name', choices=['MNIST','CIFAR10','CIFAR100'])
     parser.add_argument('--batch_size',             default=64,                 type=int,       help='minibatch size')
-    parser.add_argument('-a','--architecture',      default='VGG16',            type=str,       help='network architecture', choices=['VGG4','VGG5','VGG9','VGG11','VGG13','VGG16','VGG19','RESNET12','RESNET20','RESNET34'])
-    parser.add_argument('-lr','--learning_rate',    default=1e-2,               type=float,     help='initial learning_rate')
+    parser.add_argument('-a','--architecture',      default='VGG16',            type=str,       help='network architecture', choices=['VGG4','VGG6','VGG9','VGG11','VGG13','VGG16','VGG19','RESNET12','RESNET20','RESNET34'])
+    parser.add_argument('-lr','--learning_rate',    default=1e-3,               type=float,     help='initial learning_rate')
     parser.add_argument('--pretrained_ann',         default='',                 type=str,       help='pretrained model to initialize ANN')
     parser.add_argument('--test_only',              action='store_true',                        help='perform only inference')
     parser.add_argument('--epochs',                 default=300,                type=int,       help='number of training epochs')
-    parser.add_argument('--lr_interval',            default='0.45 0.70 0.90',   type=str,       help='intervals at which to reduce lr, expressed as %%age of total epochs')
-    parser.add_argument('--lr_reduce',              default=10,                 type=int,       help='reduction factor for learning rate')
     parser.add_argument('--optimizer',              default='SGD',             type=str,       help='optimizer for SNN backpropagation', choices=['SGD', 'Adam'])
     parser.add_argument('--dropout',                default=0.2,                type=float,     help='dropout percentage for conv layers')
     parser.add_argument('--kernel_size',            default=3,                  type=int,       help='filter size for the conv layers')
@@ -210,40 +203,35 @@ if __name__ == '__main__':
     learning_rate   = args.learning_rate
     pretrained_ann  = args.pretrained_ann
     epochs          = args.epochs
-    lr_reduce       = args.lr_reduce
     optimizer       = args.optimizer
     dropout         = args.dropout
     kernel_size     = args.kernel_size
 
-    values = args.lr_interval.split()
-    lr_interval = []
-    for value in values:
-        lr_interval.append(int(float(value)*args.epochs))
-    
-    
     log_file = './logs/ann/'
     try:
         os.mkdir(log_file)
     except OSError:
         pass 
     
-    identifier = 'ann_'+architecture.lower()+'_'+dataset.lower()
+    identifier = 'ann_'+architecture.lower()+'_'+dataset.lower()+'_'+time.ctime(time.time())
     log_file+=identifier+'.log'
     
     if args.log:
         f= open(log_file, 'w', buffering=1)
-    else:
-        f=sys.stdout
+        sys.stdout = f
+    #else:
+    #    f=sys.stdout
     
     
-    f.write('\n Run on time: {}'.format(datetime.datetime.now()))
+    print('\n Run on time: {}'.format(datetime.datetime.now()))
+    print(f'Process ID: {os.getpid()}')
             
-    f.write('\n\n Arguments:')
+    print('\n Arguments:')
     for arg in vars(args):
         if arg == 'lr_interval':
-            f.write('\n\t {:20} : {}'.format(arg, lr_interval))
+            print('\t {:20} : {}'.format(arg, lr_interval))
         else:
-            f.write('\n\t {:20} : {}'.format(arg, getattr(args,arg)))
+            print('\t {:20} : {}'.format(arg, getattr(args,arg)))
         
     # Training settings
     if torch.cuda.is_available() and args.gpu:
@@ -318,7 +306,7 @@ if __name__ == '__main__':
             model = ResNet20(labels=labels, dropout=dropout)
         elif architecture.lower() == 'resnet34':
             model = ResNet34(labels=labels, dropout=dropout) 
-    #f.write('\n{}'.format(model))
+    #print('{}'.format(model))
     
     #CIFAR100 sometimes has problem to start training
     #One solution is to train for CIFAR10 with same architecture
@@ -331,17 +319,18 @@ if __name__ == '__main__':
             if key in cur_dict:
                 if (state['state_dict'][key].shape == cur_dict[key].shape):
                     cur_dict[key] = nn.Parameter(state['state_dict'][key].data)
-                    f.write('\n Success: Loaded {} from {}'.format(key, pretrained_ann))
+                    print('Success: Loaded {} from {}'.format(key, pretrained_ann))
                 else:
-                    f.write('\n Error: Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
+                    print('Error: Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
             else:
-                f.write('\n Error: Loaded weight {} not present in current model'.format(key))
+                print('Error: Loaded weight {} not present in current model'.format(key))
         
         model.load_state_dict(cur_dict)
     
-    f.write('\n {}'.format(model)) 
+    print('{}'.format(model)) 
     
     if torch.cuda.is_available() and args.gpu:
+        print('Running on GPU')
         model.cuda()
     
     if optimizer == 'SGD':
@@ -349,13 +338,15 @@ if __name__ == '__main__':
     elif optimizer == 'Adam':
         optimizer = optim.Adam(model.parameters(), lr=learning_rate, amsgrad=True, weight_decay=5e-4)
     
-    f.write('\n {}'.format(optimizer))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=64, verbose=True)
+    print('{}'.format(optimizer))
     
     max_accuracy = 0
-    compute_mac(model, dataset)
+    #compute_mac(model, dataset)
     for epoch in range(1, epochs):    
         start_time = datetime.datetime.now()
         train(epoch, train_loader)
         test(test_loader)
+        scheduler.step()
            
-    f.write('\n Highest accuracy: {:.4f}'.format(max_accuracy))
+    print('Highest accuracy: {:.4f}'.format(max_accuracy))

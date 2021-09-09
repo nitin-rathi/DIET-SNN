@@ -10,7 +10,7 @@ import math
 
 cfg = {
     'VGG4' : [64, 'A', 128, 'A'],
-    'VGG5' : [64, 'A', 128, 128, 'A'],
+    'VGG6' : [64, 'A', 128, 128, 'A'],
     'VGG9':  [64, 'A', 128, 256, 'A', 256, 512, 'A', 512, 'A', 512],
     'VGG11': [64, 'A', 128, 256, 'A', 512, 512, 'A', 512, 'A', 512, 512],
     'VGG13': [64, 64, 'A', 128, 128, 'A', 256, 256, 'A', 512, 512, 512, 'A', 512],
@@ -28,7 +28,7 @@ class VGG(nn.Module):
         self.dropout        = dropout
         self.features       = self._make_layers(cfg[vgg_name])
 
-        if vgg_name == 'VGG5' and dataset!= 'MNIST':
+        if vgg_name == 'VGG6' and dataset!= 'MNIST':
             self.classifier = nn.Sequential(
                             nn.Linear(512*4*4, 4096, bias=False),
                             nn.ReLU(inplace=True),
@@ -48,7 +48,7 @@ class VGG(nn.Module):
                             #nn.Dropout(0.5),
                             nn.Linear(1024, labels, bias=False)
                             )
-        elif vgg_name!='VGG5' and dataset!='MNIST':
+        elif vgg_name!='VGG6' and dataset!='MNIST':
             self.classifier = nn.Sequential(
                             nn.Linear(512*2*2, 4096, bias=False),
                             nn.ReLU(inplace=True),
@@ -58,7 +58,7 @@ class VGG(nn.Module):
                             nn.Dropout(0.5),
                             nn.Linear(4096, labels, bias=False)
                             )
-        elif vgg_name == 'VGG5' and dataset == 'MNIST':
+        elif vgg_name == 'VGG6' and dataset == 'MNIST':
             self.classifier = nn.Sequential(
                             nn.Linear(128*7*7, 4096, bias=False),
                             nn.ReLU(inplace=True),
@@ -68,7 +68,7 @@ class VGG(nn.Module):
                             nn.Dropout(0.5),
                             nn.Linear(4096, labels, bias=False)
                             )
-        elif vgg_name!='VGG5' and dataset =='MNIST':
+        elif vgg_name!='VGG6' and dataset =='MNIST':
             self.classifier = nn.Sequential(
                             nn.Linear(512*1*1, 4096, bias=False),
                             nn.ReLU(inplace=True),
@@ -145,14 +145,14 @@ class VGG(nn.Module):
 
 def test():
     for a in cfg.keys():
-        if a=='VGG5':
+        if a=='VGG6':
             continue
         net = VGG(a)
         x = torch.randn(2,3,32,32)
         y = net(x)
         print(y.size())
-    # For VGG5 change the linear layer in self. classifier from '512*2*2' to '512*4*4'    
-    # net = VGG('VGG5')
+    # For VGG6 change the linear layer in self. classifier from '512*2*2' to '512*4*4'    
+    # net = VGG('VGG6')
     # x = torch.randn(2,3,32,32)
     # y = net(x)
     # print(y.size())
