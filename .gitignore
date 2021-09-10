@@ -2,6 +2,7 @@ logs
 trained_models
 __pycache__
 code
+*.ods
 *.ods*
 *.pdf
 *.gv
