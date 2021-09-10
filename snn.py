@@ -15,6 +15,7 @@ from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
 import numpy as np
 import datetime
+import time
 import pdb
 from self_models import *
 import sys
@@ -55,7 +56,7 @@ def find_threshold(batch_size=512, timesteps=2500, architecture='VGG16'):
     def find(layer):
         max_act=0
         
-        f.write('\n Finding threshold for layer {}'.format(layer))
+        print('\n Finding threshold for layer {}'.format(layer))
         for batch_idx, (data, target) in enumerate(loader):
             
             if torch.cuda.is_available() and args.gpu:
@@ -67,10 +68,10 @@ def find_threshold(batch_size=512, timesteps=2500, architecture='VGG16'):
                 if output>max_act:
                     max_act = output.item()
 
-                #f.write('\nBatch:{} Current:{:.4f} Max:{:.4f}'.format(batch_idx+1,output.item(),max_act))
+                #print('\nBatch:{} Current:{:.4f} Max:{:.4f}'.format(batch_idx+1,output.item(),max_act))
                 if batch_idx==0:
                     thresholds.append(max_act)
-                    f.write(' {}'.format(thresholds))
+                    print(' {}'.format(thresholds))
                     model.module.threshold_update(scaling_factor=1.0, thresholds=thresholds[:])
                     break
     
@@ -107,25 +108,14 @@ def find_threshold(batch_size=512, timesteps=2500, architecture='VGG16'):
                 else:
                     find(int(c[0])+pos)
 
-    f.write('\n ANN thresholds: {}'.format(thresholds))
+    print('\n ANN thresholds: {}'.format(thresholds))
     return thresholds
 
 def train(epoch):
 
-    global learning_rate
-    
     losses = AverageMeter('Loss')
     top1   = AverageMeter('Acc@1')
-
-    if epoch in lr_interval:
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = param_group['lr'] / lr_reduce
-            learning_rate = param_group['lr']
     
-    #f.write('Epoch: {} Learning Rate: {:.2e}'.format(epoch,learning_rate_use))
-    
-    #total_loss = 0.0
-    #total_correct = 0
     model.train()
     local_time = datetime.datetime.now()  
     #current_time = start_time
@@ -162,7 +152,7 @@ def train(epoch):
                 temp1 = temp1+[round(value.item(),5)]
             for key, value in sorted(model.module.leak.items(), key=lambda x: (int(x[0][1:]), (x[1]))):
                 temp2 = temp2+[round(value.item(),5)]
-            f.write('\n\nEpoch: {}, batch: {}, train_loss: {:.4f}, train_acc: {:.4f}, threshold: {}, leak: {}, timesteps: {}, time: {}'
+            print('\n\nEpoch: {}, batch: {}, train_loss: {:.4f}, train_acc: {:.4f}, threshold: {}, leak: {}, timesteps: {}, time: {}'
                     .format(epoch,
                         batch_idx+1,
                         losses.avg,
@@ -193,9 +183,8 @@ def train(epoch):
             # if not args.dont_save:
             #     torch.save(state,filename)
 
-    f.write('\nEpoch: {}, lr: {:.1e}, train_loss: {:.4f}, train_acc: {:.4f}'
+    print('\nEpoch: {}, train_loss: {:.4f}, train_acc: {:.4f}'
                     .format(epoch,
-                        learning_rate,
                         losses.avg,
                         top1.avg,
                         )
@@ -213,7 +202,7 @@ def test(epoch):
             temp1 = temp1+[round(value.item(),2)]   
         for key, value in sorted(model.module.leak.items(), key=lambda x: (int(x[0][1:]), (x[1]))): 
             temp2 = temp2+[round(value.item(),2)]   
-        f.write('\n Thresholds: {}, leak: {}'.format(temp1, temp2))
+        print('\n Thresholds: {}, leak: {}'.format(temp1, temp2))
 
     with torch.no_grad():
         model.eval()
@@ -235,7 +224,7 @@ def test(epoch):
             
             if test_acc_every_batch:
                 
-                f.write('\n Images {}/{} Accuracy: {}/{}({:.4f})'
+                print('\n Images {}/{} Accuracy: {}/{}({:.4f})'
                     .format(
                     test_loader.batch_size*(batch_idx+1),
                     len(test_loader.dataset),
@@ -253,7 +242,7 @@ def test(epoch):
                 temp2 = temp2+[value.item()]
         
         if epoch>5 and top1.avg<0.15:
-            f.write('\n Quitting as the training is not progressing')
+            print('\n Quitting as the training is not progressing')
             exit(0)
 
         if top1.avg>max_accuracy:
@@ -280,7 +269,7 @@ def test(epoch):
             #if is_best:
             #    shutil.copyfile(filename, 'best_'+filename)
 
-        f.write(' test_loss: {:.4f}, test_acc: {:.4f}, best: {:.4f} time: {}'
+        print(' test_loss: {:.4f}, test_acc: {:.4f}, best: {:.4f} time: {}'
             .format(
             losses.avg, 
             top1.avg,
@@ -302,8 +291,8 @@ if __name__ == '__main__':
     parser.add_argument('--test_only',              action='store_true',                        help='perform only inference')
     parser.add_argument('--log',                    action='store_true',                        help='to print the output on terminal or to log file')
     parser.add_argument('--epochs',                 default=30,                 type=int,       help='number of training epochs')
-    parser.add_argument('--lr_interval',            default='0.60 0.80 0.90',   type=str,       help='intervals at which to reduce lr, expressed as %%age of total epochs')
-    parser.add_argument('--lr_reduce',              default=10,                 type=int,       help='reduction factor for learning rate')
+    #parser.add_argument('--lr_interval',            default='0.60 0.80 0.90',   type=str,       help='intervals at which to reduce lr, expressed as %%age of total epochs')
+    #parser.add_argument('--lr_reduce',              default=10,                 type=int,       help='reduction factor for learning rate')
     parser.add_argument('--timesteps',              default=20,                 type=int,       help='simulation timesteps')
     parser.add_argument('--leak',                   default=1.0,                type=float,     help='membrane leak')
     parser.add_argument('--scaling_factor',         default=0.3,                type=float,     help='scaling factor for thresholds at reduced timesteps')
@@ -343,7 +332,7 @@ if __name__ == '__main__':
     pretrained_ann      = args.pretrained_ann
     pretrained_snn      = args.pretrained_snn
     epochs              = args.epochs
-    lr_reduce           = args.lr_reduce
+    #lr_reduce           = args.lr_reduce
     timesteps           = args.timesteps
     leak                = args.leak
     scaling_factor      = args.scaling_factor
@@ -365,23 +354,19 @@ if __name__ == '__main__':
     start_epoch         = 1
     max_accuracy        = 0.0
     
-    values = args.lr_interval.split()
-    lr_interval = []
-    for value in values:
-        lr_interval.append(int(float(value)*args.epochs))
-
-    log_file = './logs/ann_ablation/'
+    log_file = './logs/snn/'
     try:
         os.mkdir(log_file)
     except OSError:
         pass 
-    identifier = 'snn_'+architecture.lower()+'_'+dataset.lower()+'_'+str(timesteps)+'_'+str(datetime.datetime.now())
+    identifier = 'snn_'+architecture.lower()+'_'+dataset.lower()+'_'+str(timesteps)+'_'+time.ctime(time.time())
     log_file+=identifier+'.log'
     
     if args.log:
         f = open(log_file, 'w', buffering=1)
-    else:
-        f = sys.stdout
+        sys.stdout = f
+    #else:
+    #    f = sys.stdout
 
     if not pretrained_ann:
         ann_file = './trained_models/ann/ann_'+architecture.lower()+'_'+dataset.lower()+'.pth'
@@ -390,16 +375,15 @@ if __name__ == '__main__':
             if val.lower()=='y' or val.lower()=='yes':
                 pretrained_ann = ann_file
 
-    f.write('\n Run on time: {}'.format(datetime.datetime.now()))
+    print('\n Run on time: {}'.format(datetime.datetime.now()))
+    print(f'Process ID: {os.getpid()}')
 
-    f.write('\n\n Arguments: ')
+    print('\n Arguments: ')
     for arg in vars(args):
-        if arg == 'lr_interval':
-            f.write('\n\t {:20} : {}'.format(arg, lr_interval))
-        elif arg == 'pretrained_ann':
-            f.write('\n\t {:20} : {}'.format(arg, pretrained_ann))
+        if arg == 'pretrained_ann':
+            print('\t {:20} : {}'.format(arg, pretrained_ann))
         else:
-            f.write('\n\t {:20} : {}'.format(arg, getattr(args,arg)))
+            print('\t {:20} : {}'.format(arg, getattr(args,arg)))
     
     # Training settings
     
@@ -486,24 +470,24 @@ if __name__ == '__main__':
         #     if key in cur_dict:
         #         if (state['state_dict'][key].shape == cur_dict[key].shape):
         #             cur_dict[key] = nn.Parameter(state['state_dict'][key].data)
-        #             f.write('\n Success: Loaded {} from {}'.format(key, pretrained_ann))
+        #             print('\n Success: Loaded {} from {}'.format(key, pretrained_ann))
         #         else:
-        #             f.write('\n Error: Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
+        #             print('\n Error: Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
         #     else:
-        #         f.write('\n Error: Loaded weight {} not present in current model'.format(key))
+        #         print('\n Error: Loaded weight {} not present in current model'.format(key))
         # model.load_state_dict(cur_dict)
 
         missing_keys, unexpected_keys = model.load_state_dict(state['state_dict'], strict=False)
-        f.write('\n Missing keys : {}, Unexpected Keys: {}'.format(missing_keys, unexpected_keys))        
-        f.write('\n Info: Accuracy of loaded ANN model: {}'.format(state['accuracy']))
+        print('\n Missing keys : {}, Unexpected Keys: {}'.format(missing_keys, unexpected_keys))        
+        print('\n Info: Accuracy of loaded ANN model: {}'.format(state['accuracy']))
 
         #If thresholds present in loaded ANN file
-        if 'thresholds' in state.keys() and 0:
+        if 'thresholds' in state.keys():
             thresholds = state['thresholds']
-            f.write('\n Info: Thresholds loaded from trained ANN: {}'.format(thresholds))
+            print('\n Info: Thresholds loaded from trained ANN: {}'.format(thresholds))
             model.module.threshold_update(scaling_factor = scaling_factor, thresholds=thresholds[:])
         else:
-            thresholds = find_threshold(batch_size=512, timesteps=500, architecture=architecture)
+            thresholds = find_threshold(batch_size=512, timesteps=100, architecture=architecture)
             model.module.threshold_update(scaling_factor = scaling_factor, thresholds=thresholds[:])
             
             #Save the threhsolds in the ANN file
@@ -517,29 +501,29 @@ if __name__ == '__main__':
                 
         state = torch.load(pretrained_snn, map_location='cpu')
         missing_keys, unexpected_keys = model.load_state_dict(state['state_dict'], strict=False)
-        f.write('\n Missing keys : {}, Unexpected Keys: {}'.format(missing_keys, unexpected_keys))        
-        f.write('\n Info: Accuracy of loaded ANN model: {}'.format(state['accuracy']))
+        print('\n Missing keys : {}, Unexpected Keys: {}'.format(missing_keys, unexpected_keys))        
+        print('\n Info: Accuracy of loaded ANN model: {}'.format(state['accuracy']))
         # cur_dict = model.state_dict()     
         # for key in state['state_dict'].keys():
         #     if key in cur_dict:
         #         if (state['state_dict'][key].shape == cur_dict[key].shape):
         #             cur_dict[key] = nn.Parameter(state['state_dict'][key].data)
-        #             f.write('\n Loaded {} from {}'.format(key, pretrained_snn))
+        #             print('\n Loaded {} from {}'.format(key, pretrained_snn))
         #         else:
-        #             f.write('\n Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
+        #             print('\n Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
         #     else:
-        #         f.write('\n Loaded weight {} not present in current model'.format(state['state_dict'][key]))
+        #         print('\n Loaded weight {} not present in current model'.format(state['state_dict'][key]))
         # model.load_state_dict(cur_dict)
 
         # if 'thresholds' in state.keys():
         #     if state['timesteps']!=timesteps or state['leak']!=leak:
-        #         f.write('\n Timesteps/Leak mismatch between loaded SNN and current simulation timesteps/leak, current timesteps/leak {}/{}, loaded timesteps/leak {}/{}'.format(timesteps, leak, state['timesteps'], state['leak']))
+        #         print('\n Timesteps/Leak mismatch between loaded SNN and current simulation timesteps/leak, current timesteps/leak {}/{}, loaded timesteps/leak {}/{}'.format(timesteps, leak, state['timesteps'], state['leak']))
         #     thresholds = state['thresholds']
         #     model.module.threshold_update(scaling_factor = 1.0, thresholds=thresholds[:])
         # else:
-        #     f.write('\n Loaded SNN model does not have thresholds')
+        #     print('\n Loaded SNN model does not have thresholds')
 
-    f.write('\n {}'.format(model))
+    print('\n {}'.format(model))
     
     #model = nn.DataParallel(model) 
     if torch.cuda.is_available() and args.gpu:
@@ -557,28 +541,29 @@ if __name__ == '__main__':
     elif optimizer == 'SGD':
         optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, weight_decay=weight_decay, nesterov=False)
     
-    f.write('\n {}'.format(optimizer))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=128, verbose=True)
+    print('\n {}'.format(optimizer))
         
     # find_threshold() alters the timesteps and leak, restoring it here
     model.module.network_update(timesteps=timesteps, leak=leak)
     
     if resume:
-        f.write('\n Resuming from checkpoint {}'.format(resume))
+        print('\n Resuming from checkpoint {}'.format(resume))
         state = torch.load(resume, map_location='cpu')
         missing_keys, unexpected_keys = model.load_state_dict(state['state_dict'], strict=False)
-        f.write('\n Missing keys : {}, Unexpected Keys: {}'.format(missing_keys, unexpected_keys))        
-        f.write('\n Info: Accuracy of loaded ANN model: {}'.format(state['accuracy']))
+        print('\n Missing keys : {}, Unexpected Keys: {}'.format(missing_keys, unexpected_keys))        
+        print('\n Info: Accuracy of loaded ANN model: {}'.format(state['accuracy']))
         
         # cur_dict = model.state_dict()     
         # for key in state['state_dict'].keys():
         #     if key in cur_dict:
         #         if (state['state_dict'][key].shape == cur_dict[key].shape):
         #             cur_dict[key] = nn.Parameter(state['state_dict'][key].data)
-        #             f.write('\n Success: Loaded {} from {}'.format(key, pretrained_ann))
+        #             print('\n Success: Loaded {} from {}'.format(key, pretrained_ann))
         #         else:
-        #             f.write('\n Error: Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
+        #             print('\n Error: Size mismatch, size of loaded model {}, size of current model {}'.format(state['state_dict'][key].shape, model.state_dict()[key].shape))
         #     else:
-        #         f.write('\n Error: Loaded weight {} not present in current model'.format(key))
+        #         print('\n Error: Loaded weight {} not present in current model'.format(key))
         # model.load_state_dict(cur_dict)
         #pdb.set_trace()
         #thresholds = state['thresholds']
@@ -593,15 +578,16 @@ if __name__ == '__main__':
         for param_group in optimizer.param_groups:
             learning_rate =  param_group['lr']
 
-        f.write('\n Loaded from resume epoch: {}, accuracy: {:.4f} lr: {:.1e}'.format(epoch, max_accuracy, learning_rate))
+        print('\n Loaded from resume epoch: {}, accuracy: {:.4f} lr: {:.1e}'.format(epoch, max_accuracy, learning_rate))
 
     for epoch in range(start_epoch, epochs):
         start_time = datetime.datetime.now()
         if not args.test_only:
             train(epoch)
         test(epoch)
+        scheduler.step()
 
-    f.write('\n Highest accuracy: {:.4f}'.format(max_accuracy))
+    print('\n Highest accuracy: {:.4f}'.format(max_accuracy))
 
 
 

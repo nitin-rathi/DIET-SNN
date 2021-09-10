@@ -274,7 +274,7 @@ class VGG_SNN_STDB(nn.Module):
 		self.neuron_init(x)
 		max_mem=0.0
 		ann = [0]*len(self.features)
-		ann[1] = 1
+		#ann[1] = 1
 		#pdb.set_trace()
 		for t in range(self.timesteps):
 			out_prev = x
@@ -289,11 +289,13 @@ class VGG_SNN_STDB(nn.Module):
 						if (cur>max_mem):
 							max_mem = torch.tensor([cur])
 						break
-					
+					delta_mem 		= self.features[l](out_prev)
+					self.mem[l]		= getattr(self.leak, 'l'+str(l)) * self.mem[l] + delta_mem
 					mem_thr 		= (self.mem[l]/getattr(self.threshold, 't'+str(l))) - 1.0
 					rst 			= getattr(self.threshold, 't'+str(l)) * (mem_thr>0).float()
-					self.mem[l] 	= getattr(self.leak, 'l'+str(l)) *self.mem[l] + self.features[l](out_prev) - rst
-					out_prev 		= self.features[l](out_prev)
+					#self.mem[l] 	= getattr(self.leak, 'l'+str(l)) *self.mem[l] + self.features[l](out_prev) - rst
+					self.mem[l]		= self.mem[l] - rst
+					#out_prev 		= self.features[l](out_prev)
 				
 				elif isinstance(self.features[l], nn.ReLU):
 					#pdb.set_trace()
@@ -326,11 +328,14 @@ class VGG_SNN_STDB(nn.Module):
 						if cur>max_mem:
 							max_mem = torch.tensor([cur])
 						break
-
+					
+					delta_mem 			= self.classifier[l](out_prev)
+					self.mem[prev+l]	= getattr(self.leak, 'l'+str(prev+l)) * self.mem[prev+l] + delta_mem
 					mem_thr 			= (self.mem[prev+l]/getattr(self.threshold, 't'+str(prev+l))) - 1.0
 					rst 				= getattr(self.threshold,'t'+str(prev+l)) * (mem_thr>0).float()
-					self.mem[prev+l] 	= getattr(self.leak, 'l'+str(prev+l)) * self.mem[prev+l] + self.classifier[l](out_prev) - rst
-				
+					#self.mem[prev+l] 	= getattr(self.leak, 'l'+str(prev+l)) * self.mem[prev+l] + self.classifier[l](out_prev) - rst
+					self.mem[prev+l] 	= self.mem[prev+l] - rst
+
 				elif isinstance(self.classifier[l], nn.ReLU):
 					out 				= self.act_func(mem_thr, (t-1-self.spike[prev+l]))
 					self.spike[prev+l] 	= self.spike[prev+l].masked_fill(out.bool(),t-1)
