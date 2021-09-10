@@ -99,9 +99,12 @@ class BasicBlock(nn.Module):
         # 	s.detach_()
 
         #conv1
+        delta_mem		= self.residual[0](inp)
+        mem[pos] 		= getattr(leak, 'l'+str(pos)) *mem[pos] + delta_mem
         mem_thr 		= (mem[pos]/getattr(threshold, 't'+str(pos))) - 1.0
         rst 			= getattr(threshold, 't'+str(pos)) * (mem_thr>0).float()
-        mem[pos] 		= getattr(leak, 'l'+str(pos)) *mem[pos] + self.residual[0](inp) - rst
+        #mem[pos] 		= getattr(leak, 'l'+str(pos)) *mem[pos] + self.residual[0](inp) - rst
+        mem[pos] 		= mem[pos] - rst
 
         #relu1
         out 			= act_func(mem_thr, (t-1-spike[pos]))
@@ -112,9 +115,12 @@ class BasicBlock(nn.Module):
         out_prev 		= out_prev * mask[pos]
 		
 		#conv2+identity
+        delta_mem 		= self.residual[3](out_prev) + self.identity(inp)
+        mem[pos+1] 		= getattr(leak, 'l'+str(pos+1))*mem[pos+1] + delta_mem
         mem_thr 		= (mem[pos+1]/getattr(threshold, 't'+str(pos+1))) - 1.0
         rst 			= getattr(threshold, 't'+str(pos+1)) * (mem_thr>0).float()
-        mem[pos+1] 		= getattr(leak, 'l'+str(pos+1))*mem[pos+1] + self.residual[3](out_prev) + self.identity(inp) - rst
+        #mem[pos+1] 		= getattr(leak, 'l'+str(pos+1))*mem[pos+1] + self.residual[3](out_prev) + self.identity(inp) - rst
+        mem[pos+1] 		= mem[pos+1] - rst
 
         #relu2
         out 			= act_func(mem_thr, (t-1-spike[pos+1]))
@@ -387,10 +393,13 @@ class RESNET_SNN_STDB(nn.Module):
 						if (cur>max_mem):
 							max_mem = torch.tensor([cur])
 						break
-
+					
+					delta_mem 		= self.pre_process[l](out_prev)
+					self.mem[l] 	= getattr(self.leak, 'l'+str(l)) *self.mem[l] + delta_mem
 					mem_thr 		= (self.mem[l]/getattr(self.threshold, 't'+str(l))) - 1.0
 					rst 			= getattr(self.threshold, 't'+str(l)) * (mem_thr>0).float()
-					self.mem[l] 	= getattr(self.leak, 'l'+str(l)) *self.mem[l] + self.pre_process[l](out_prev) - rst
+					#self.mem[l] 	= getattr(self.leak, 'l'+str(l)) *self.mem[l] + self.pre_process[l](out_prev) - rst
+					self.mem[l] 	= self.mem[l] - rst
 					
 				elif isinstance(self.pre_process[l], nn.ReLU):
 					out 			= self.act_func(mem_thr, (t-1-self.spike[l-1]))
